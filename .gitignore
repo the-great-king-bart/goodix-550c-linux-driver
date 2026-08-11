@@ -1,0 +1,56 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+.venv/
+.cache/
+.tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local research caches and the superseded initial Vite scaffold.
+research/upstream/
+research/obsolete-vite/
+
+# Never commit proprietary Windows driver copies or biometric artifacts.
+research/artifacts/windows-driver/
+research/artifacts/*.dll
+research/artifacts/*.exe
+research/artifacts/*.sys
+research/artifacts/*.dat
+research/artifacts/*.bmp
+research/artifacts/*.pgm
+# Live transcripts can contain device-unique OTP data, PSK hashes, or sealed
+# Windows key material. Keep them local even though they are not plaintext PSKs.
+research/artifacts/*.json
+research/artifacts/*.bin
+research/secrets/
+.dpapi-windows-ro/
+.coverage
+/build/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

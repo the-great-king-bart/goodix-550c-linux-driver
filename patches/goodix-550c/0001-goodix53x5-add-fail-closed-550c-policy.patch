@@ -1,0 +1,769 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Tue, 11 Aug 2026 12:57:24 +0200
+Subject: [PATCH] goodix53x5: add fail-closed 550c policy
+
+---
+ drivers/goodix53x5/goodix53x5-commands.c  |   8 +
+ drivers/goodix53x5/goodix53x5-commands.h  |  37 ---
+ drivers/goodix53x5/goodix53x5-private.h   |  15 --
+ drivers/goodix53x5/goodix53x5-safety.h    |  47 ++++
+ drivers/goodix53x5/goodix53x5-session.c   | 265 ++++++++++------------
+ drivers/goodix53x5/goodix53x5-tls.c       |   2 +-
+ drivers/goodix53x5/goodix53x5-transport.c |  25 ++
+ drivers/goodix53x5/goodix53x5.c           |   6 +-
+ sigfm/sigfm.cpp                           |  13 +-
+ 9 files changed, 209 insertions(+), 209 deletions(-)
+ create mode 100644 drivers/goodix53x5/goodix53x5-safety.h
+
+diff --git a/drivers/goodix53x5/goodix53x5-commands.c b/drivers/goodix53x5/goodix53x5-commands.c
+index a588f62..dab1e25 100644
+--- a/drivers/goodix53x5/goodix53x5-commands.c
++++ b/drivers/goodix53x5/goodix53x5-commands.c
+@@ -167,6 +167,7 @@ goodix_cmd_production_read (FpiSsm *ssm, FpDevice *dev, guint32 read_type)
+   goodix_run_cmd (ssm, dev, 0xE, 0x2, payload, 4, TRUE);
+ }
+
++#if 0 /* Persistent production/PSK writes are excluded from this build. */
+ void
+ goodix_cmd_production_write (FpiSsm *ssm, FpDevice *dev,
+                              guint32 data_type,
+@@ -181,6 +182,7 @@ goodix_cmd_production_write (FpiSsm *ssm, FpDevice *dev,
+
+   goodix_run_cmd (ssm, dev, 0xE, 0x1, payload, payload_len, TRUE);
+ }
++#endif
+
+ void
+ goodix_cmd_mcu_send (FpiSsm *ssm, FpDevice *dev, guint32 data_type,
+@@ -301,6 +303,7 @@ goodix_cmd_preset_psk_read (FpiSsm *ssm, FpDevice *dev,
+   goodix_run_cmd (ssm, dev, 0xE, 0x2, payload, sizeof (payload), TRUE);
+ }
+
++#if 0 /* App erase, PSK write, and firmware write/check are never compiled. */
+ void
+ goodix_cmd_mcu_erase_app (FpiSsm *ssm, FpDevice *dev)
+ {
+@@ -361,6 +364,7 @@ goodix_cmd_check_firmware (FpiSsm *ssm, FpDevice *dev, const guint8 *hmac32)
+    * unlike the 53x5 family). Reply is a one-byte status (0x01 = ok). */
+   goodix_run_cmd (ssm, dev, 0xF, 0x2, hmac32, 32, TRUE);
+ }
++#endif
+
+ void
+ goodix_cmd_mcu_reset_soft (FpiSsm *ssm, FpDevice *dev)
+@@ -377,6 +381,7 @@ goodix_cmd_mcu_reset_soft (FpiSsm *ssm, FpDevice *dev)
+  * Named reply parsers
+  * ======================================================================== */
+
++#if 0 /* Parsers reachable only after persistent writes are excluded too. */
+ gboolean
+ goodix_cmd_parse_preset_psk_write_reply (FpDevice *dev, GError **error)
+ {
+@@ -438,6 +443,7 @@ goodix_cmd_parse_check_firmware_reply (FpDevice *dev, GError **error)
+
+   return TRUE;
+ }
++#endif
+
+ gboolean
+ goodix_cmd_parse_preset_psk_read_reply (FpDevice      *dev,
+@@ -527,6 +533,7 @@ goodix_cmd_parse_production_read_reply (FpDevice      *dev,
+                                              out_data, out_data_len);
+ }
+
++#if 0 /* Persistent production-write replies are never accepted. */
+ gboolean
+ goodix_cmd_parse_production_write_reply (FpDevice      *dev,
+                                          const guint8 **out_payload,
+@@ -535,6 +542,7 @@ goodix_cmd_parse_production_write_reply (FpDevice      *dev,
+   return goodix_parse_reply_exact (dev, 0xE, 0x1, out_payload,
+                                    out_payload_len, NULL);
+ }
++#endif
+
+ gboolean
+ goodix_cmd_parse_mcu_reply (FpDevice      *dev,
+diff --git a/drivers/goodix53x5/goodix53x5-commands.h b/drivers/goodix53x5/goodix53x5-commands.h
+index 651f33c..64b656d 100644
+--- a/drivers/goodix53x5/goodix53x5-commands.h
++++ b/drivers/goodix53x5/goodix53x5-commands.h
+@@ -53,12 +53,6 @@ void goodix_cmd_read_otp (FpiSsm *ssm, FpDevice *dev);
+ void goodix_cmd_production_read (FpiSsm *ssm, FpDevice *dev,
+                                  guint32 read_type);
+
+-/* Production write of @data under @data_type (e.g. 0xB002 = PSK white box).
+- * Expects data (a one-byte status reply). */
+-void goodix_cmd_production_write (FpiSsm *ssm, FpDevice *dev,
+-                                  guint32 data_type,
+-                                  const guint8 *data, gsize data_len);
+-
+ /* Send an MCU envelope of @data_type (GTLS handshake traffic). ACK only;
+  * the device replies asynchronously via a plain receive. */
+ void goodix_cmd_mcu_send (FpiSsm *ssm, FpDevice *dev, guint32 data_type,
+@@ -104,25 +98,6 @@ void goodix_cmd_ec_control (FpiSsm *ssm, FpDevice *dev, gboolean on);
+ void goodix_cmd_preset_psk_read (FpiSsm *ssm, FpDevice *dev,
+                                  guint32 flags, guint32 length, guint32 offset);
+
+-/* Erase the app to drop into IAP. ACK only (device re-enumerates after). */
+-void goodix_cmd_mcu_erase_app (FpiSsm *ssm, FpDevice *dev);
+-
+-/* Write one offset-chunk of the PSK container. Expects data (status byte). */
+-void goodix_cmd_preset_psk_write_chunk (FpiSsm *ssm, FpDevice *dev,
+-                                        guint32 total_len, guint32 chunk_len,
+-                                        guint32 offset, const guint8 *chunk);
+-
+-/* Write one firmware chunk at @offset (@number is the 550c's extra field, =2).
+- * Expects data (status byte). */
+-void goodix_cmd_write_firmware (FpiSsm *ssm, FpDevice *dev,
+-                                guint32 offset, const guint8 *data,
+-                                gsize data_len, guint32 number);
+-
+-/* Validate the reflashed app against a 32-byte PSK-derived HMAC. Expects data
+- * (status byte). */
+-void goodix_cmd_check_firmware (FpiSsm *ssm, FpDevice *dev,
+-                                const guint8 *hmac32);
+-
+ /* Soft-reset the MCU back into the app. ACK only (device re-enumerates). */
+ void goodix_cmd_mcu_reset_soft (FpiSsm *ssm, FpDevice *dev);
+
+@@ -160,18 +135,6 @@ gboolean goodix_cmd_parse_production_read_reply (FpDevice      *dev,
+                                                  const guint8 **out_data,
+                                                  gsize         *out_data_len);
+
+-gboolean goodix_cmd_parse_production_write_reply (FpDevice      *dev,
+-                                                  const guint8 **out_payload,
+-                                                  gsize         *out_payload_len);
+-
+-/* IAP reply parsers: TRUE on success, else FALSE with @error set. */
+-gboolean goodix_cmd_parse_preset_psk_write_reply (FpDevice *dev,
+-                                                  GError  **error);
+-gboolean goodix_cmd_parse_write_firmware_reply (FpDevice *dev,
+-                                                GError  **error);
+-gboolean goodix_cmd_parse_check_firmware_reply (FpDevice *dev,
+-                                                GError  **error);
+-
+ gboolean goodix_cmd_parse_mcu_reply (FpDevice      *dev,
+                                      guint32        expected_type,
+                                      const guint8 **out_data,
+diff --git a/drivers/goodix53x5/goodix53x5-private.h b/drivers/goodix53x5/goodix53x5-private.h
+index 12fde8e..2ba4de7 100644
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -150,25 +150,10 @@ struct _FpiDeviceGoodix53x5
+   /* Firmware version string */
+   gchar *fw_version;
+
+-  /* TRUE while verifying a PSK write during open. */
+-  gboolean psk_write_verify_pending;
+-
+   /* TRUE once the 550c TLS-PSK handshake has completed (drives the open-time
+    * handshake pump loop). */
+   gboolean tls_handshake_done;
+
+-  /* 550c self-heal PSK provisioning (goodix53x5-session.c). */
+-  gboolean open_reached_tls;    /* the open SSM entered the TLS-PSK handshake */
+-  gboolean selfheal_attempted;  /* self-heal ran once this open — do not loop */
+-  gboolean heal_erased;         /* app already erased once this heal attempt */
+-  gboolean heal_already_provisioned; /* hash slot already == all-zero: skip reflash */
+-  guint32  heal_fw_offset;      /* running offset of the firmware reflash loop */
+-  guint8   heal_fw_hmac[32];    /* PSK-derived check_firmware HMAC (target PSK) */
+-  const guint8 *heal_fw;        /* app image to reflash; owned by the loader */
+-  gsize    heal_fw_len;
+-  guint8  *heal_container;      /* assembled 446-byte PSK container */
+-  gsize    heal_container_len;
+-
+   /* Current command (for sub-SSM) */
+   GoodixCmd *cmd;
+
+diff --git a/drivers/goodix53x5/goodix53x5-safety.h b/drivers/goodix53x5/goodix53x5-safety.h
+new file mode 100644
+index 0000000..219f4c9
+--- /dev/null
++++ b/drivers/goodix53x5/goodix53x5-safety.h
+@@ -0,0 +1,47 @@
++/*
++ * Goodix 550c fail-closed command policy.
++ *
++ * Persistent mutations are never permitted.  Normal operation also needs a
++ * bounded set of volatile initialization commands; those require both an
++ * explicit build-time opt-in and GOODIX550C_ALLOW_VOLATILE_INIT=1 at runtime.
++ */
++#pragma once
++
++#include <glib.h>
++
++#ifndef GOODIX550C_ENABLE_VOLATILE_INIT
++#define GOODIX550C_ENABLE_VOLATILE_INIT 0
++#endif
++
++static inline gboolean
++goodix_550c_volatile_init_allowed (void)
++{
++#if GOODIX550C_ENABLE_VOLATILE_INIT
++  return g_strcmp0 (g_getenv ("GOODIX550C_ALLOW_VOLATILE_INIT"), "1") == 0;
++#else
++  return FALSE;
++#endif
++}
++
++static inline gboolean
++goodix_550c_command_is_persistent_mutation (guint8 category,
++                                             guint8 command)
++{
++  return (category == 0xA && command == 0x2) || /* A4: erase app */
++         (category == 0xE && command == 0x0) || /* E0: PSK/container write */
++         (category == 0xE && command == 0x1) || /* E2: production/PSK write */
++         (category == 0xF && command == 0x0) || /* F0: firmware write */
++         (category == 0xF && command == 0x2);   /* F4: firmware check/commit */
++}
++
++static inline gboolean
++goodix_550c_command_needs_volatile_init (guint8 category,
++                                         guint8 command)
++{
++  return (category == 0xA && command == 0x1) || /* A2: sensor/MCU reset */
++         (category == 0x8 && command == 0x0) || /* sensor-register write */
++         (category == 0x9 && command == 0x0) || /* config upload */
++         (category == 0x3 && command >= 0x1 && command <= 0x3) || /* FDT */
++         (category == 0x6 && command == 0x0) || /* sleep */
++         (category == 0xA && command == 0x7);   /* EC power control */
++}
+diff --git a/drivers/goodix53x5/goodix53x5-session.c b/drivers/goodix53x5/goodix53x5-session.c
+index b2fe2c0..7b5a014 100644
+--- a/drivers/goodix53x5/goodix53x5-session.c
++++ b/drivers/goodix53x5/goodix53x5-session.c
+@@ -25,13 +25,19 @@
+ #include "goodix53x5-commands.h"
+ #include "goodix53x5-calibration.h"
+ #include "goodix53x5-image.h"
++#include "goodix53x5-safety.h"
+ #include "goodix53x5-session.h"
+-#include "goodix53x5-firmware550c.h"
+
++#include <errno.h>
++#include <glib/gstdio.h>
++#include <sys/stat.h>
+ #include <string.h>
++#include <unistd.h>
++#include <openssl/crypto.h>
+ #include <openssl/rand.h>
+
+ #define GOODIX_OPEN_FDT_MAX_RETRIES 2
++#define GOODIX_550C_EXPECTED_FW "GF5288_GM168SEC_APP_13021"
+
+ /* Open SSM — full device initialization */
+ typedef enum {
+@@ -72,39 +78,83 @@ typedef enum {
+ } GoodixOpenState;
+
+
+-/*
+- * All-zero PSK. The 550c is provisioned to this value (see the reverse-
+- * engineering repo's provisioning tooling), matching the rest of the Goodix
+- * 51x0/52xd/55x4 family. It is the default, so a provisioned unit is fully
+- * plug-and-play with no configuration.
+- */
++/* Legacy GTLS devices use the family all-zero key.  This fail-closed build
++ * binds only to 550c, whose standard TLS path requires an external PSK. */
+ static const guint8 goodix_psk[GOODIX_PSK_LEN] = { 0 };
+
+ /*
+- * A unit still holding a Windows-provisioned (DPAPI-wrapped, per-provision
+- * random) PSK can override the all-zero default with its recovered value via the
+- * GOODIX550C_PSK environment variable (64 hex chars) or the file
+- * /etc/goodix550c.psk. See the driver README for how to recover and, preferably,
+- * how to reprovision the sensor to the all-zero PSK instead.
++ * Fail closed: the 550c PSK must be supplied explicitly.  The driver never
++ * assumes the public all-zero key and never searches a system-wide path.
++ * GOODIX550C_PSK accepts 64 hexadecimal characters; GOODIX550C_PSK_FILE names
++ * a file containing the same value.  Supplying both is rejected as ambiguous.
+  */
+-#define GOODIX_550C_PSK_FILE "/etc/goodix550c.psk"
+-
+ static gboolean
+ goodix_550c_load_psk (guint8   out[GOODIX_PSK_LEN],
+                       GError **error)
+ {
+-  g_autofree gchar *hex = NULL;
++  gchar *hex = NULL;
+   const gchar *env = g_getenv ("GOODIX550C_PSK");
++  const gchar *path = g_getenv ("GOODIX550C_PSK_FILE");
++  gsize hex_alloc_len = 0;
++  gboolean result = FALSE;
++
++  if (env != NULL && *env != '\0' && path != NULL && *path != '\0')
++    {
++      g_set_error_literal (error, FP_DEVICE_ERROR,
++                           FP_DEVICE_ERROR_NOT_SUPPORTED,
++                           "Set exactly one of GOODIX550C_PSK or "
++                           "GOODIX550C_PSK_FILE");
++      goto out;
++    }
+
+   if (env != NULL && *env != '\0')
+     {
+       hex = g_strdup (env);
++      hex_alloc_len = strlen (env);
+     }
+-  else if (!g_file_get_contents (GOODIX_550C_PSK_FILE, &hex, NULL, NULL))
++  else if (path != NULL && *path != '\0')
+     {
+-      /* No override configured: use the provisioned all-zero PSK. */
+-      memcpy (out, goodix_psk, GOODIX_PSK_LEN);
+-      return TRUE;
++      GStatBuf st;
++
++      if (!g_path_is_absolute (path))
++        {
++          g_set_error_literal (error, FP_DEVICE_ERROR,
++                               FP_DEVICE_ERROR_NOT_SUPPORTED,
++                               "GOODIX550C_PSK_FILE must be an absolute path");
++          goto out;
++        }
++
++      if (g_lstat (path, &st) != 0)
++        {
++          int saved_errno = errno;
++
++          g_set_error (error, G_FILE_ERROR,
++                       g_file_error_from_errno (saved_errno),
++                       "Cannot inspect GOODIX550C_PSK_FILE: %s",
++                       g_strerror (saved_errno));
++          goto out;
++        }
++
++      if (!S_ISREG (st.st_mode) || st.st_uid != geteuid () ||
++          (st.st_mode & 0777) != 0600)
++        {
++          g_set_error_literal (error, FP_DEVICE_ERROR,
++                               FP_DEVICE_ERROR_NOT_SUPPORTED,
++                               "GOODIX550C_PSK_FILE must be a regular file "
++                               "owned by the current user with mode 0600");
++          goto out;
++        }
++
++      if (!g_file_get_contents (path, &hex, &hex_alloc_len, error))
++        goto out;
++    }
++  else
++    {
++      g_set_error_literal (error, FP_DEVICE_ERROR,
++                           FP_DEVICE_ERROR_NOT_SUPPORTED,
++                           "550c requires an externally supplied PSK; set "
++                           "GOODIX550C_PSK or GOODIX550C_PSK_FILE");
++      goto out;
+     }
+
+   g_strstrip (hex);
+@@ -113,7 +163,7 @@ goodix_550c_load_psk (guint8   out[GOODIX_PSK_LEN],
+       g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_NOT_SUPPORTED,
+                    "550c PSK must be %d hex chars, got %zu",
+                    GOODIX_PSK_LEN * 2, strlen (hex));
+-      return FALSE;
++      goto out;
+     }
+
+   for (int i = 0; i < GOODIX_PSK_LEN; i++)
+@@ -126,48 +176,24 @@ goodix_550c_load_psk (guint8   out[GOODIX_PSK_LEN],
+           g_set_error_literal (error, FP_DEVICE_ERROR,
+                                FP_DEVICE_ERROR_NOT_SUPPORTED,
+                                "550c PSK contains non-hex characters");
+-          return FALSE;
++          goto out;
+         }
+       out[i] = (guint8) ((hi << 4) | lo);
+     }
+
+-  return TRUE;
+-}
+-
+-/*
+- * TRUE if the operator has explicitly pinned this unit to a specific PSK
+- * (env var or config file). Such a unit is deliberately on a per-machine PSK,
+- * so self-heal must NOT reprovision it to all-zero — it would destroy the very
+- * PSK the operator recovered. Only units left on the default (all-zero) path
+- * are eligible for self-heal.
+- */
+-static gboolean
+-goodix_550c_has_psk_override (void)
+-{
+-  const gchar *env = g_getenv ("GOODIX550C_PSK");
++  result = TRUE;
+
+-  if (env != NULL && *env != '\0')
+-    return TRUE;
+-
+-  return g_file_test (GOODIX_550C_PSK_FILE, G_FILE_TEST_EXISTS);
++out:
++  if (hex != NULL)
++    {
++      OPENSSL_cleanse (hex, hex_alloc_len);
++      g_free (hex);
++    }
++  if (!result)
++    OPENSSL_cleanse (out, GOODIX_PSK_LEN);
++  return result;
+ }
+
+-/* PSK white box for writing all-zero PSK */
+-static const guint8 goodix_psk_white_box[GOODIX_PSK_WHITE_BOX_LEN] = {
+-  0xec, 0x35, 0xae, 0x3a, 0xbb, 0x45, 0xed, 0x3f,
+-  0x12, 0xc4, 0x75, 0x1f, 0x1e, 0x5c, 0x2c, 0xc0,
+-  0x5b, 0x3c, 0x54, 0x52, 0xe9, 0x10, 0x4d, 0x9f,
+-  0x2a, 0x31, 0x18, 0x64, 0x4f, 0x37, 0xa0, 0x4b,
+-  0x6f, 0xd6, 0x6b, 0x1d, 0x97, 0xcf, 0x80, 0xf1,
+-  0x34, 0x5f, 0x76, 0xc8, 0x4f, 0x03, 0xff, 0x30,
+-  0xbb, 0x51, 0xbf, 0x30, 0x8f, 0x2a, 0x98, 0x75,
+-  0xc4, 0x1e, 0x65, 0x92, 0xcd, 0x2a, 0x2f, 0x9e,
+-  0x60, 0x80, 0x9b, 0x17, 0xb5, 0x31, 0x60, 0x37,
+-  0xb6, 0x9b, 0xb2, 0xfa, 0x5d, 0x4c, 0x8a, 0xc3,
+-  0x1e, 0xdb, 0x33, 0x94, 0x04, 0x6e, 0xc0, 0x6b,
+-  0xbd, 0xac, 0xc5, 0x7d, 0xa6, 0xa7, 0x56, 0xc5,
+-};
+-
+ /* ========================================================================
+  * Open SSM — full device initialization
+  * ======================================================================== */
+@@ -185,6 +211,18 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+       {
+         GError *error = NULL;
+
++        if (!goodix_550c_volatile_init_allowed ())
++          {
++            fpi_ssm_mark_failed (
++              ssm,
++              fpi_device_error_new_msg (
++                FP_DEVICE_ERROR_NOT_SUPPORTED,
++                "Volatile initialization is disabled; rebuild with "
++                "-Dgoodix550c_volatile_init=true and set "
++                "GOODIX550C_ALLOW_VOLATILE_INIT=1"));
++            return;
++          }
++
+         if (!g_usb_device_reset (fpi_device_get_usb_device (dev), &error))
+           {
+             fpi_ssm_mark_failed (ssm, error);
+@@ -201,7 +239,7 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+
+         if (!g_usb_device_claim_interface (
+                 fpi_device_get_usb_device (dev), self->usb_interface,
+-                G_USB_DEVICE_CLAIM_INTERFACE_BIND_KERNEL_DRIVER, &error))
++                0, &error))
+           {
+             fpi_ssm_mark_failed (ssm, error);
+             return;
+@@ -222,7 +260,7 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+
+     case GOODIX_OPEN_RESET:
+       {
+-        /* Parse the firmware version reply before sending the reset */
++        /* Parse the firmware version reply before sending the sensor reset. */
+         g_autoptr(GError) error = NULL;
+         const guint8 *pl;
+         gsize pl_len;
+@@ -237,6 +275,19 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+         self->fw_version = g_strndup ((const gchar *) pl,
+                                       strnlen ((const gchar *) pl, pl_len));
+
++        if (self->variant == GOODIX_VARIANT_TLS_PSK &&
++            g_strcmp0 (self->fw_version, GOODIX_550C_EXPECTED_FW) != 0)
++          {
++            fpi_ssm_mark_failed (
++              ssm,
++              fpi_device_error_new_msg (
++                FP_DEVICE_ERROR_NOT_SUPPORTED,
++                "Refusing volatile initialization on unvalidated firmware '%s' "
++                "(expected '%s')",
++                self->fw_version, GOODIX_550C_EXPECTED_FW));
++            return;
++          }
++
+         goodix_cmd_reset_sensor (ssm, dev);
+       }
+       break;
+@@ -315,10 +366,6 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+         guint8 psk[GOODIX_PSK_LEN];
+         g_autoptr(GError) psk_error = NULL;
+
+-        /* Mark that the open reached the handshake: a failure from here (with
+-         * no PSK override) is what arms self-heal reprovisioning. */
+-        self->open_reached_tls = TRUE;
+-
+         if (!goodix_550c_load_psk (psk, &psk_error))
+           {
+             fpi_ssm_mark_failed (ssm, g_steal_pointer (&psk_error));
+@@ -327,6 +374,7 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+
+         g_clear_pointer (&self->tls, goodix_tls_free);
+         self->tls = goodix_tls_new (psk, GOODIX_PSK_LEN);
++        OPENSSL_cleanse (psk, sizeof (psk));
+         if (self->tls == NULL)
+           {
+             fpi_ssm_mark_failed (ssm,
+@@ -446,83 +494,29 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+           if (psk_data_len >= 32 && memcmp (psk_data, expected_hash, 32) == 0)
+             {
+               fp_dbg ("PSK hash matches, no need to write");
+-              self->psk_write_verify_pending = FALSE;
+               fpi_ssm_jump_to_state (ssm, GOODIX_OPEN_GTLS_CLIENT_HELLO);
+               return;
+             }
+         }
+
+-        /* Need to write PSK white box */
+-        fp_info ("Writing PSK white box");
+-        self->psk_write_verify_pending = TRUE;
+-        goodix_cmd_production_write (ssm, dev, 0xB002, goodix_psk_white_box,
+-                                     GOODIX_PSK_WHITE_BOX_LEN);
++        fpi_ssm_mark_failed (ssm,
++                             fpi_device_error_new_msg (
++                               FP_DEVICE_ERROR_NOT_SUPPORTED,
++                               "Persistent PSK writes are disabled by the "
++                               "fail-closed build policy"));
+       }
+       break;
+
+     case GOODIX_OPEN_VERIFY_PSK_WRITE:
+-      {
+-        const guint8 *pl;
+-        gsize pl_len;
+-
+-        if (!goodix_cmd_parse_production_write_reply (dev, &pl, &pl_len) ||
+-            pl_len < 1)
+-          {
+-            fpi_ssm_mark_failed (ssm,
+-                                 fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+-                                                           "Failed to parse PSK write reply"));
+-            return;
+-          }
+-
+-        if (pl[0] != 0)
+-          {
+-            fpi_ssm_mark_failed (ssm,
+-                                 fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+-                                                           "PSK write failed: %u",
+-                                                           pl[0]));
+-            return;
+-          }
+-
+-        /* Re-read the PSK hash to verify the write before GTLS */
+-        goodix_cmd_production_read (ssm, dev, 0xB003);
+-      }
++      fpi_ssm_mark_failed (ssm,
++                           fpi_device_error_new_msg (
++                             FP_DEVICE_ERROR_NOT_SUPPORTED,
++                             "PSK-write verification state is unreachable in "
++                             "the fail-closed build"));
+       break;
+
+     case GOODIX_OPEN_GTLS_CLIENT_HELLO:
+       {
+-        if (self->psk_write_verify_pending)
+-          {
+-            /* Parse the re-read PSK hash from the previous state */
+-            const guint8 *psk_data;
+-            gsize psk_data_len;
+-            g_autoptr(GChecksum) sha = g_checksum_new (G_CHECKSUM_SHA256);
+-            guint8 expected_hash[32];
+-            gsize hash_len = 32;
+-
+-            if (!goodix_cmd_parse_production_read_reply (dev, 0xB003,
+-                                                         &psk_data,
+-                                                         &psk_data_len))
+-              {
+-                fpi_ssm_mark_failed (ssm,
+-                                     fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+-                                                               "Failed to re-read PSK hash"));
+-                return;
+-              }
+-
+-            g_checksum_update (sha, goodix_psk, GOODIX_PSK_LEN);
+-            g_checksum_get_digest (sha, expected_hash, &hash_len);
+-
+-            if (psk_data_len < 32 || memcmp (psk_data, expected_hash, 32) != 0)
+-              {
+-                fpi_ssm_mark_failed (ssm,
+-                                     fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+-                                                               "PSK hash mismatch after write"));
+-                return;
+-              }
+-
+-            self->psk_write_verify_pending = FALSE;
+-          }
+-
+         /* Generate client_random and send via MCU */
+         RAND_bytes (self->gtls.client_random, 32);
+         goodix_crypto_gtls_init (&self->gtls, goodix_psk);
+@@ -757,6 +751,7 @@ goodix_open_ssm_handler (FpiSsm   *ssm,
+     }
+ }
+
++#if 0
+ /* ========================================================================
+  * Self-heal PSK provisioning (550c only)
+  *
+@@ -1328,6 +1323,7 @@ goodix_maybe_start_selfheal (FpDevice *dev)
+   fpi_ssm_start (ssm, goodix_heal_ssm_done);
+   return TRUE;
+ }
++#endif
+
+ static void
+ goodix_cleanup_failed_open (FpDevice *dev)
+@@ -1366,15 +1362,6 @@ goodix_open_ssm_done (FpiSsm *ssm, FpDevice *dev, GError *error)
+     {
+       fp_warn ("Device open failed: %s", error->message);
+
+-      /* A 550c that failed the all-zero handshake with no PSK override is
+-       * likely still on a per-machine PSK. Try to reprovision it to all-zero
+-       * and re-open. When this takes over, it owns the open completion. */
+-      if (goodix_maybe_start_selfheal (dev))
+-        {
+-          g_error_free (error);
+-          return;
+-        }
+-
+       goodix_cleanup_failed_open (dev);
+       fpi_device_open_complete (dev, error);
+       return;
+@@ -1392,7 +1379,6 @@ goodix_launch_open_ssm (FpDevice *dev)
+   FpiSsm *ssm;
+
+   self->variant = (GoodixVariant) fpi_device_get_driver_data (dev);
+-  self->open_reached_tls = FALSE;
+   self->tls_handshake_done = FALSE;
+
+   /* USB interface + bulk endpoints differ between the 53x5 and the 550c. */
+@@ -1420,8 +1406,5 @@ goodix_start_open_ssm (FpDevice *dev)
+ {
+-  FpiDeviceGoodix53x5 *self = FPI_DEVICE_GOODIX53X5 (dev);
+
+-  /* Fresh open: allow self-heal to run once if the handshake fails. */
+-  self->selfheal_attempted = FALSE;
+   goodix_launch_open_ssm (dev);
+ }
+
+@@ -1432,10 +1415,9 @@ goodix_start_open_ssm (FpDevice *dev)
+ /**
+  * If the device needs reinitialization (system sleep happened while it was
+  * open), release any stale interface claim and run the full open-time
+- * initialization SSM as a sub-SSM of @ssm. The full sequence is required:
+- * after an S4 reset/re-enumeration the kernel rebinds cdc_acm to our
+- * interface, so recovery needs the same USB reset + claim-with-detach +
+- * GTLS handshake as a fresh open.
++ * initialization SSM as a sub-SSM of @ssm. USB/MCU reset and the rest of this
++ * volatile sequence remain behind the same build-time and runtime opt-in used
++ * for a fresh open.
+  *
+  * Returns TRUE if a reinit sub-SSM was started (caller returns and the
+  * parent advances when it completes), FALSE if no reinit was needed.
+diff --git a/drivers/goodix53x5/goodix53x5-tls.c b/drivers/goodix53x5/goodix53x5-tls.c
+index 19073c4..2e389f7 100644
+--- a/drivers/goodix53x5/goodix53x5-tls.c
++++ b/drivers/goodix53x5/goodix53x5-tls.c
+@@ -105,7 +105,7 @@ goodix_tls_new (const guint8 *psk,
+
+   /* PSK cipher suites live below the default security level. */
+   SSL_CTX_set_security_level (tls->ctx, 0);
+-  if (SSL_CTX_set_cipher_list (tls->ctx, "PSK") != 1)
++  if (SSL_CTX_set_cipher_list (tls->ctx, "PSK-AES128-CBC-SHA256") != 1)
+     goto fail;
+
+   SSL_CTX_set_psk_server_callback (tls->ctx, goodix_tls_psk_server_cb);
+diff --git a/drivers/goodix53x5/goodix53x5-transport.c b/drivers/goodix53x5/goodix53x5-transport.c
+index 7483168..0f31c07 100644
+--- a/drivers/goodix53x5/goodix53x5-transport.c
++++ b/drivers/goodix53x5/goodix53x5-transport.c
+@@ -21,6 +21,7 @@
+
+ #include "drivers_api.h"
+ #include "goodix53x5-private.h"
++#include "goodix53x5-safety.h"
+ #include "goodix53x5-transport.h"
+
+ #include <string.h>
+@@ -496,6 +497,30 @@ goodix_run_cmd (FpiSsm       *parent_ssm,
+   FpiSsm *cmd_ssm;
+   GoodixCmd *cmd;
+
++  if (goodix_550c_command_is_persistent_mutation (category, command))
++    {
++      fpi_ssm_mark_failed (
++        parent_ssm,
++        fpi_device_error_new_msg (
++          FP_DEVICE_ERROR_NOT_SUPPORTED,
++          "Blocked persistent Goodix command category=0x%02x command=0x%02x",
++          category, command));
++      return;
++    }
++
++  if (goodix_550c_command_needs_volatile_init (category, command) &&
++      !goodix_550c_volatile_init_allowed ())
++    {
++      fpi_ssm_mark_failed (
++        parent_ssm,
++        fpi_device_error_new_msg (
++          FP_DEVICE_ERROR_NOT_SUPPORTED,
++          "Blocked volatile Goodix command category=0x%02x command=0x%02x; "
++          "explicit build-time and runtime opt-in required",
++          category, command));
++      return;
++    }
++
+   cmd = g_new0 (GoodixCmd, 1);
+   cmd->category = category;
+   cmd->command = command;
+diff --git a/drivers/goodix53x5/goodix53x5.c b/drivers/goodix53x5/goodix53x5.c
+index bae8b4c..bd155cc 100644
+--- a/drivers/goodix53x5/goodix53x5.c
++++ b/drivers/goodix53x5/goodix53x5.c
+@@ -56,7 +56,6 @@ goodix_close (FpDevice *dev)
+   g_clear_pointer (&self->reference_image, g_free);
+   g_clear_pointer (&self->captured_image, g_free);
+   g_clear_pointer (&self->enroll_features, g_ptr_array_unref);
+-  g_clear_pointer (&self->heal_container, g_free);
+   g_clear_pointer (&self->tls, goodix_tls_free);
+
+   if (self->cmd)
+@@ -124,10 +123,7 @@ fpi_device_goodix53x5_init (FpiDeviceGoodix53x5 *self)
+ }
+
+ static const FpIdEntry goodix53x5_id_table[] = {
+-  { .vid = 0x27c6, .pid = 0x5335, .driver_data = GOODIX_VARIANT_GTLS },
+-  { .vid = 0x27c6, .pid = 0x5385, .driver_data = GOODIX_VARIANT_GTLS },
+-  { .vid = 0x27c6, .pid = 0x5395, .driver_data = GOODIX_VARIANT_GTLS },
+-  /* Lenovo Yoga 9 etc.: standard TLS 1.2-PSK + pack-layer framing */
++  /* Fail-closed integration is intentionally limited to the audited 550c. */
+   { .vid = 0x27c6, .pid = 0x550c, .driver_data = GOODIX_VARIANT_TLS_PSK },
+   { .vid = 0, .pid = 0, .driver_data = 0 },
+ };
+diff --git a/sigfm/sigfm.cpp b/sigfm/sigfm.cpp
+index f442c20..3c0f2ec 100644
+--- a/sigfm/sigfm.cpp
++++ b/sigfm/sigfm.cpp
+@@ -23,21 +23,14 @@
+ #include "binary.hpp"
+ #include "img-info.hpp"
+
+-#include "opencv2/core/persistence.hpp"
+-#include "opencv2/core/types.hpp"
++#include "opencv2/core.hpp"
+ #include "opencv2/features2d.hpp"
+-#include "opencv2/imgcodecs.hpp"
++#include "opencv2/imgproc.hpp"
+ #include <algorithm>
++#include <set>
+-#include <cstdio>
+-#include <filesystem>
+-#include <fstream>
+-#include <iterator>
+-#include <sstream>
+ #include <stdexcept>
+ #include <string>
+ #include <tuple>
+-
+-#include <opencv2/opencv.hpp>
+ #include <vector>
+
+ namespace {

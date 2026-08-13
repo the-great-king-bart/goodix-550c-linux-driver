@@ -28,6 +28,10 @@ research/upstream/
 research/obsolete-vite/
 
 # Never commit proprietary Windows driver copies or biometric artifacts.
+# Whole directory is ignored: transcripts can carry device-unique OTP data, PSK
+# hashes, or sealed Windows key material regardless of file extension. The
+# extension rules below are kept as explicit intent.
+research/artifacts/
 research/artifacts/windows-driver/
 research/artifacts/*.dll
 research/artifacts/*.exe
@@ -39,6 +43,7 @@ research/artifacts/*.pgm
 # Windows key material. Keep them local even though they are not plaintext PSKs.
 research/artifacts/*.json
 research/artifacts/*.bin
+research/artifacts/*.stderr
 research/secrets/
 .dpapi-windows-ro/
 .coverage

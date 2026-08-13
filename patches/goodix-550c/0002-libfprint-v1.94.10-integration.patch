@@ -60,12 +60,15 @@ index 3449481..9eb5464 100644
      'fpcmoc' :
          [ 'drivers/fpcmoc/fpc.c' ],
      'realtek' :
-@@ -172,6 +174,9 @@ helper_sources = {
+@@ -172,6 +174,12 @@ helper_sources = {
 
  drivers_sources = []
  drivers_cflags = []
 +if get_option('goodix550c_volatile_init')
 +    drivers_cflags += [ '-DGOODIX550C_ENABLE_VOLATILE_INIT=1' ]
++endif
++if get_option('goodix550c_manual_fdt_poll')
++    drivers_cflags += [ '-DGOODIX550C_ENABLE_MANUAL_FDT_POLL=1' ]
 +endif
  foreach driver: drivers
      drivers_sources += driver_sources[driver]
@@ -163,12 +166,16 @@ diff --git a/meson_options.txt b/meson_options.txt
 index 3c4cd26..81238bb 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
-@@ -2,6 +2,10 @@ option('drivers',
+@@ -2,6 +2,14 @@ option('drivers',
         description: 'Drivers to integrate, "default" selects the default set, "all" selects all drivers',
         type: 'string',
         value: 'default')
 +option('goodix550c_volatile_init',
 +       description: 'Compile the Goodix 550c volatile USB/MCU initialization path (runtime GOODIX550C_ALLOW_VOLATILE_INIT=1 is also required)',
++       type: 'boolean',
++       value: false)
++option('goodix550c_manual_fdt_poll',
++       description: 'Compile experimental Goodix 550c manual-FDT polling (runtime GOODIX550C_ALLOW_MANUAL_FDT_POLL=1 is also required)',
 +       type: 'boolean',
 +       value: false)
  option('introspection',

@@ -6,12 +6,17 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
     printf '%s\n' \
-        "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE" \
-        "Both paths must resolve below this project. No service is stopped."
+        "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE \\" \
+        "  --allow-volatile-init [--allow-manual-fdt-poll]" \
+        "Both paths must resolve below this project. No service is stopped." \
+        "--allow-manual-fdt-poll is optional here: this harness only opens and" \
+        "closes, so it reaches no manual-FDT state. Omit it for a control run."
 }
 
 STAGE_DIR=""
 PSK_FILE=""
+VOLATILE_INIT_ACK=0
+MANUAL_FDT_ACK=0
 while (($#)); do
     case "$1" in
         --stage-dir)
@@ -23,6 +28,12 @@ while (($#)); do
             shift
             (($#)) || { usage >&2; exit 2; }
             PSK_FILE="$1"
+            ;;
+        --allow-volatile-init)
+            VOLATILE_INIT_ACK=1
+            ;;
+        --allow-manual-fdt-poll)
+            MANUAL_FDT_ACK=1
             ;;
         -h|--help)
             usage
@@ -41,6 +52,10 @@ if ((EUID != 0)); then
     exit 2
 fi
 [[ -n "$STAGE_DIR" && -n "$PSK_FILE" ]] || { usage >&2; exit 2; }
+if ((VOLATILE_INIT_ACK != 1)); then
+    printf 'Refusing: --allow-volatile-init is required for this one run.\n' >&2
+    exit 2
+fi
 
 STAGE_DIR="$(realpath -e "$STAGE_DIR")"
 PSK_FILE="$(realpath -e "$PSK_FILE")"
@@ -99,10 +114,20 @@ if fuser -s "$usb_node"; then
     exit 2
 fi
 
+# The experimental runtime gate is supplied only when this run acknowledged it,
+# so an unacknowledged run cannot enable manual polling through an inherited
+# value and a control run stays possible against a manual-FDT stage.
+MANUAL_FDT_ENV=()
+if ((MANUAL_FDT_ACK == 1)); then
+    MANUAL_FDT_ENV=(GOODIX550C_ALLOW_MANUAL_FDT_POLL=1)
+fi
+
 exec env \
     -u GOODIX550C_PSK \
     -u LD_PRELOAD \
+    -u GOODIX550C_ALLOW_MANUAL_FDT_POLL \
     GOODIX550C_ALLOW_VOLATILE_INIT=1 \
+    "${MANUAL_FDT_ENV[@]}" \
     GOODIX550C_PSK_FILE="$PSK_FILE" \
     LD_LIBRARY_PATH="$LIB_DIR" \
     "$HARNESS"

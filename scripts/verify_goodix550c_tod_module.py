@@ -17,6 +17,7 @@ TOD_SYMBOL_MAP = ROOT / "tod" / "goodix550c-tod.map"
 TOD_MESON = ROOT / "tod" / "meson.build"
 TOD_OPTIONS = ROOT / "tod" / "meson_options.txt"
 TOD_HARNESS = ROOT / "tools" / "goodix550c_tod_open_close.c"
+TOD_ENROLL_HARNESS = ROOT / "tools" / "goodix550c_tod_enroll.c"
 TOD_RUNNER = ROOT / "scripts" / "run_goodix550c_tod_open_close.sh"
 TOD_SMOKE = ROOT / "scripts" / "smoke_goodix550c_tod_fprintd.sh"
 
@@ -457,6 +458,39 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
     ):
         require(marker in harness, f"TOD physical harness invariant missing: {marker}", failures)
 
+    enroll_harness = read_text(TOD_ENROLL_HARNESS, failures)
+    for marker in (
+        '#define EXPECTED_DRIVER "goodix53x5"',
+        '#define EXPECTED_NAME "Goodix HTK32 Fingerprint Sensor"',
+        # Enrollment reaches the finger-wait states, so unlike open/close this
+        # harness requires the manual-FDT gate rather than tolerating absence.
+        'g_strcmp0 (manual_fdt_gate, "1") == 0',
+        'g_getenv ("GOODIX550C_PSK") == NULL',
+        'g_getenv ("LD_LIBRARY_PATH") == NULL',
+        'g_getenv ("LD_PRELOAD") == NULL',
+        "devices->len != 1",
+        "fp_device_get_scan_type (device) != FP_SCAN_TYPE_PRESS",
+        "fp_device_open_sync (device, NULL, &error)",
+        "fp_device_enroll_sync (device",
+        "fp_device_close_sync (device, NULL, &error)",
+    ):
+        require(
+            marker in enroll_harness,
+            f"TOD enrollment harness invariant missing: {marker}",
+            failures,
+        )
+    for forbidden in (
+        "fp_print_serialize",
+        "fp_print_to_file",
+        "g_file_set_contents",
+        "fopen",
+    ):
+        require(
+            forbidden not in enroll_harness,
+            f"TOD enrollment harness must not persist template data: {forbidden}",
+            failures,
+        )
+
     runner = read_text(TOD_RUNNER, failures)
     for marker in (
         "--allow-volatile-init",
@@ -817,6 +851,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sdk-root", type=Path, required=True)
     parser.add_argument("--module", type=Path)
     parser.add_argument("--harness", type=Path)
+    parser.add_argument("--enroll-harness", type=Path)
     parser.add_argument("--core-library", type=Path)
     parser.add_argument("--tod-library", type=Path)
     parser.add_argument("--build-dir", type=Path)
@@ -859,6 +894,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.tod_library.resolve(),
             )
         )
+        if args.enroll_harness is not None:
+            failures.extend(
+                audit_harness(
+                    args.enroll_harness.resolve(),
+                    args.core_library.resolve(),
+                    args.tod_library.resolve(),
+                )
+            )
 
     if failures:
         for failure in failures:

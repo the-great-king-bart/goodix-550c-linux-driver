@@ -549,6 +549,101 @@ has succeeded.
 Operationally: if the handshake fails with a provider cipher error, run the
 read-only identity probe once and retry before suspecting the key or the build.
 
+### Guarded enrollment harness
+
+`tools/goodix550c_tod_enroll.c` is the only harness that reaches the finger-wait
+states. It is a capture test, not a provisioning tool: it opens the device, runs
+`fp_device_enroll_sync`, reports per-stage progress and finger-status transitions,
+then discards the template. Nothing is written, printed, or hashed, and the audit
+rejects the harness if it references any serialization or file-writing call.
+
+It is built by the same script into the same stage, with its own
+`enroll_harness_sha256` metadata entry, and is selected through the existing
+guarded wrapper rather than a second runner, so every preflight gate applies
+unchanged:
+
+```bash
+sudo scripts/run_goodix550c_tod_open_close.sh \
+  --stage-dir build/goodix550c-tod-manual-fdt-v4 \
+  --psk-file research/secrets/goodix550c.psk \
+  --expected-psk-hash research/artifacts/psk-hash-current.json \
+  --allow-volatile-init \
+  --allow-manual-fdt-poll \
+  --enroll --debug
+```
+
+`--enroll` requires `--allow-manual-fdt-poll`, because on firmware 13021 the
+finger-wait states depend on manual polling; the harness enforces the same
+requirement itself. The enrollment bound is 240 s rather than the open/close 45 s.
+`--debug` adds `G_MESSAGES_DEBUG=all` for driver diagnostics; it changes no device
+behaviour and logs no key, raw reading, image, or template.
+
+The stage used below produced module SHA-256
+`60db0a107fac417141df33d3e1c0181bb3d107b0153882dddb3e6f7b22ecec51`, open/close
+harness `bf0f4e6d079f636a77182f1ad4140ff0b77a93d4b5ddf93537dc6176071dfc66`, and
+enrollment harness
+`7c64e047bfcf37903a357b7a8d31d4ccea5639642678627e023852c86ef276ea`.
+
+#### Physical enrollment result (2026-08-13)
+
+**The sensor read a fingerprint under Linux for the first time.** The manual-FDT
+poll detected contact reliably on every placement, both reference baselines
+confirmed after 2 polls each, and captured frames passed SIGFM feature extraction:
+
+```text
+Open succeeded. Enrollment needs 8 stage(s).
+Manual FDT post-reference baseline confirmed after 2 polls
+Manual FDT finger-down poll armed
+Stage 1/8 captured.
+```
+
+This closes the firmware-13021 no-event question that blocked the project: the
+guarded fallback works, and the earlier touch-flag assumption remains correctly
+ignored.
+
+Enrollment itself does not yet complete. Both runs ended at the 240 s bound:
+
+```text
+run 1 (no debug):  4 of 8 stages captured, 36 rejections
+run 2 (--debug):   2 of 8 stages captured,  4 rejections, 7 placements
+```
+
+Every rejection was `FP_DEVICE_RETRY_CENTER_FINGER` from the enrollment coverage
+gate at `goodix53x5-enroll.c:100`, never the keypoint gate. With debug enabled the
+gate reported its exact measurement:
+
+```text
+Enrollment stage rejected: 95.4% of frame has no finger contact (limit 10.0%)
+```
+
+`goodix_device_image_clipped_fraction` counts raw12 pixels at ADC full scale
+(`GOODIX_RAW12_CLIP` 4095) across the 108x88 frame, so 95.4% means roughly 9,067 of
+9,504 pixels are railed: the decoded frame is effectively blank.
+`GOODIX_ENROLL_MAX_CLIPPED_FRACTION` is `0.10`.
+
+Three observations rule out finger placement and threshold tuning:
+
+- the rejected measurements are 95.3-95.4%, repeatable to a tenth of a percent;
+- the distribution is bimodal — a capture either passes well under 10% or lands at
+  ~95.4%, with nothing in between; and
+- the good captures are the early ones. Run 1 captured stages 1-4 and then
+  rejected 36 consecutive attempts; run 2 captured stages 1-2 and then rejected
+  every attempt.
+
+The working hypothesis is therefore a capture-path state defect, not sensing: the
+550c branch disables image readout after each capture with
+`goodix_cmd_write_sensor_register (ssm, dev, 0x022c, 0x0a, 0x02)` and
+`goodix53x5-scan.c` clears `self->reference_image` once consumed. If readout
+re-enable or reference re-acquisition does not happen for later stages, the decode
+returns a no-contact frame, which is exactly a ~95% railed image. This is not
+believed to be caused by the manual-FDT work — contact detection succeeds every
+time and hands off to untouched upstream capture code — but that has not been
+proven and should be verified rather than assumed.
+
+The next diagnostic needs no finger: log the reference frame's own clipped fraction
+and the readout register state per stage, which confirms or kills the hypothesis in
+one run. No template was produced or stored by either run.
+
 ## Verification
 
 ```text
@@ -568,6 +663,7 @@ private fprintd smoke: passed with USB/udev hidden and empty GetDevices
 option default-off:    passed, per-option rule rejects a gate that defaults on
 manual-poll bounds:    passed, both settle phases fail on a spent poll budget
 live TOD open/close:   passed 3/3 against installed 1.95.1+tod1, pad clear
+live TOD enrollment:   partial, contact and capture work, stages 2-4 of 8 only
 ```
 
 Every line above was produced after the bounded revision of patch `0005`, including
@@ -659,6 +755,7 @@ intentionally condensed.
 │   └── private-bus.conf               # non-activating smoke bus template
 └── tools/
     ├── goodix550c_open_close.c       # isolated-build TLS open/close harness
+    ├── goodix550c_tod_enroll.c       # installed-runtime enrollment capture test
     └── goodix550c_tod_open_close.c   # installed-runtime TOD open/close harness
 ```
 
@@ -675,10 +772,17 @@ now independently reproduced; revised manual-poll builds pass both native pipeli
 The exact Ubuntu TOD module now also builds reproducibly, loads through a
 workspace-only, no-USB private fprintd smoke, and has physically opened and closed
 the sensor through Ubuntu's installed `1.95.1+tod1` runtime three times in a row.
-The existing Windows firmware and PSK were not changed. Physical TOD
-enrollment/verification, module installation, and PAM integration remain separate
-phases; no driver has been installed system-wide, and no fingerprint has ever been
-read under Linux.
+The existing Windows firmware and PSK were not changed.
+
+The sensor has now read a fingerprint under Linux. Manual-FDT contact detection,
+capture, decode, and SIGFM feature extraction all work, which answers the
+firmware-13021 no-event question that blocked this project. Enrollment does not yet
+complete: after the first two to four stages every subsequent capture decodes as a
+blank, ADC-railed frame and is rejected by the coverage gate. That capture-path
+defect is the current work item. No template has been produced or stored.
+
+Module installation and PAM integration remain separate phases, and no driver has
+been installed system-wide.
 
 A code review of the manual-FDT work found and this revision fixed: unbounded
 reference-baseline and finger-up poll loops that could wedge an enrollment or

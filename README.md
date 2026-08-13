@@ -205,6 +205,36 @@ rebuilt environment, and a 45-second bound; it performs no installation or
 persistent sensor command. Its per-run private directory under `build/` is removed
 on every exit path.
 
+## Guarded enrollment capture test
+
+This is the only command that reads a finger. It runs `fp_device_enroll_sync`
+through the same guarded wrapper and **discards the template**: nothing is stored,
+printed, or hashed. It is a capture test, not a way to register a fingerprint.
+
+```bash
+sudo scripts/run_goodix550c_tod_open_close.sh \
+  --stage-dir build/goodix550c-tod-manual-fdt-v4 \
+  --psk-file research/secrets/goodix550c.psk \
+  --expected-psk-hash research/artifacts/psk-hash-current.json \
+  --allow-volatile-init \
+  --allow-manual-fdt-poll \
+  --enroll --debug
+```
+
+`--enroll` requires `--allow-manual-fdt-poll`. Keep the pad **completely clear**
+until the harness prints `PLACE your finger on the sensor now` — before that it is
+establishing two no-finger reference baselines, and contact corrupts them. Then
+place, hold until the stage is reported, lift, and repeat. `--debug` adds driver
+diagnostics; it logs no key, raw reading, image, or template. The run is bounded at
+240 seconds.
+
+Current state: contact detection and capture work, but enrollment does not finish.
+After the first two to four stages, every capture decodes as a blank frame and is
+rejected with "the finger was not centered properly" at a measured 95.4% non-contact
+area. This is a capture-path defect under investigation, not a placement problem —
+do not work around it by loosening the coverage gate, which would enroll unusable
+templates. See DOCUMENTATION.md for the evidence.
+
 ## Offline packet preview
 
 This produces the exact bytes without opening the USB device:

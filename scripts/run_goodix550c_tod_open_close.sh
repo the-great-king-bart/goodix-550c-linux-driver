@@ -15,19 +15,27 @@ PSK_FILE=''
 EXPECTED_HASH_FILE=''
 VOLATILE_ACK=0
 MANUAL_FDT_ACK=0
+ACTION=open-close
+DEBUG_LOG=0
 
 usage() {
     printf '%s\n' \
         "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE \\" \
         '  --expected-psk-hash LIVE_HASH_FILE --allow-volatile-init \\' \
-        '  [--allow-manual-fdt-poll]' \
+        '  [--allow-manual-fdt-poll] [--enroll] [--debug]' \
         '' \
         'All paths must resolve below this project. The stage must have been' \
         'built with both experimental options. This wrapper stops no service or' \
         'holder and performs no installation or persistent sensor write.' \
         '' \
-        '--allow-manual-fdt-poll is optional: this harness only opens and closes,' \
-        'so it reaches no manual-FDT state. Omit it for a control run.'
+        '--allow-manual-fdt-poll is optional for the default open/close, which' \
+        'reaches no manual-FDT state; omit it for a control run. --enroll runs the' \
+        'enrollment harness instead and requires that acknowledgement, because on' \
+        'firmware 13021 the finger-wait states depend on manual polling. Enrollment' \
+        'discards its template; it stores no fingerprint.' \
+        '' \
+        '--debug adds driver diagnostic logging to stderr. It changes no device' \
+        'behaviour and logs no key, raw reading, image, or template.'
 }
 
 while (($#)); do
@@ -52,6 +60,12 @@ while (($#)); do
             ;;
         --allow-manual-fdt-poll)
             MANUAL_FDT_ACK=1
+            ;;
+        --enroll)
+            ACTION=enroll
+            ;;
+        --debug)
+            DEBUG_LOG=1
             ;;
         -h|--help)
             usage
@@ -110,7 +124,19 @@ case "$EXPECTED_HASH_FILE" in
 esac
 
 MODULE="$STAGE_DIR/builddir/libgoodix550c.so"
-HARNESS="$STAGE_DIR/builddir/goodix550c-tod-open-close"
+if [[ "$ACTION" == enroll ]]; then
+    if ((MANUAL_FDT_ACK != 1)); then
+        printf 'Refusing: --enroll requires --allow-manual-fdt-poll.\n' >&2
+        exit 2
+    fi
+    HARNESS="$STAGE_DIR/builddir/goodix550c-tod-enroll"
+    HARNESS_METADATA_KEY=enroll_harness_sha256
+    HARNESS_TIMEOUT=240s
+else
+    HARNESS="$STAGE_DIR/builddir/goodix550c-tod-open-close"
+    HARNESS_METADATA_KEY=harness_sha256
+    HARNESS_TIMEOUT=45s
+fi
 METADATA="$STAGE_DIR/build-metadata.txt"
 SOURCE_CHECKSUMS="$STAGE_DIR/source-checksums.sha256"
 SOURCE_ROOT="$STAGE_DIR/source/module"
@@ -158,7 +184,7 @@ if [[ "$(metadata_value driver_commit || true)" != "$EXPECTED_DRIVER_COMMIT" || 
     exit 2
 fi
 if [[ "$(metadata_value module_sha256 || true)" != "$(sha256sum "$MODULE" | awk '{print $1}')" || \
-      "$(metadata_value harness_sha256 || true)" != "$(sha256sum "$HARNESS" | awk '{print $1}')" ]]; then
+      "$(metadata_value "$HARNESS_METADATA_KEY" || true)" != "$(sha256sum "$HARNESS" | awk '{print $1}')" ]]; then
     printf 'Refusing: TOD module or harness digest differs from build metadata.\n' >&2
     exit 2
 fi
@@ -343,9 +369,16 @@ if ((MANUAL_FDT_ACK == 1)); then
     MANUAL_FDT_ENV=(GOODIX550C_ALLOW_MANUAL_FDT_POLL=1)
 fi
 
-printf 'Preflight passed; opening only 27c6:550c through the project-local TOD module.\n'
+# Diagnostic logging only. The driver logs phase transitions and quality
+# decisions; it never logs key material, raw readings, images, or templates.
+DEBUG_ENV=()
+if ((DEBUG_LOG == 1)); then
+    DEBUG_ENV=(G_MESSAGES_DEBUG=all)
+fi
+
+printf 'Preflight passed; running %s against only 27c6:550c through the project-local TOD module.\n' "$ACTION"
 HARNESS_STATUS=0
-timeout --foreground --signal=INT --kill-after=5s 45s \
+timeout --foreground --signal=INT --kill-after=5s "$HARNESS_TIMEOUT" \
     env -i \
         PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         HOME="$LIVE_RUN_DIR/home" \
@@ -359,6 +392,7 @@ timeout --foreground --signal=INT --kill-after=5s 45s \
         FP_DRIVERS_ALLOWLIST=goodix53x5 \
         GOODIX550C_ALLOW_VOLATILE_INIT=1 \
         "${MANUAL_FDT_ENV[@]}" \
+        "${DEBUG_ENV[@]}" \
         GOODIX550C_PSK_FILE="$PSK_FILE" \
         "$HARNESS" || HARNESS_STATUS=$?
 

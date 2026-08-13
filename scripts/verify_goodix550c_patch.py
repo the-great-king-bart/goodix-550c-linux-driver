@@ -55,6 +55,24 @@ def read(path: Path, failures: list[str]) -> str:
         return ""
 
 
+def meson_option_is_default_off(options: str, name: str) -> bool:
+    """Report whether this exact option block declares ``value: false``.
+
+    The declaration is delimited by the next ``option(`` rather than by a
+    closing parenthesis: descriptions in these files contain parentheses. A
+    substring test over the whole file would instead be satisfied by any other
+    default-off option and would let this one silently default on.
+    """
+    start = re.search(r"option\(\s*'" + re.escape(name) + r"'\s*,", options)
+    if start is None:
+        return False
+
+    remainder = options[start.end() :]
+    following = re.search(r"\boption\(", remainder)
+    block = remainder[: following.start()] if following else remainder
+    return re.search(r"\bvalue:\s*false\b", block) is not None
+
+
 def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
     failures: list[str] = []
     driver_dir = driver_tree / "drivers" / "goodix53x5"
@@ -62,6 +80,8 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
 
     session_raw = read(driver_dir / "goodix53x5-session.c", failures)
     commands_raw = read(driver_dir / "goodix53x5-commands.c", failures)
+    scan_raw = read(driver_dir / "goodix53x5-scan.c", failures)
+    calibration = read(driver_dir / "goodix53x5-calibration.c", failures)
     transport_raw = read(driver_dir / "goodix53x5-transport.c", failures)
     safety = read(driver_dir / "goodix53x5-safety.h", failures)
     tls = read(driver_dir / "goodix53x5-tls.c", failures)
@@ -173,6 +193,81 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         failures,
     )
 
+    require(
+        re.search(
+            r"if \(self->variant == GOODIX_VARIANT_TLS_PSK\).*?"
+            r"GOODIX_PROTO_CMD_FDT_DOWN,\s*fdt_base,\s*"
+            r"GOODIX_FDT_BASE_LEN,\s*FALSE",
+            commands,
+            re.DOTALL,
+        )
+        is not None,
+        "firmware-13021 TLS path does not use the direct 24-byte FDT-down base",
+        failures,
+    )
+    require(
+        "goodix_build_fdt_payload (0x0E" in commands
+        and "goodix_build_fdt_payload (op_code" in commands,
+        "unvalidated FDT-up/manual layouts were changed",
+        failures,
+    )
+    require(
+        "FDT down ACK validated; event read posted" in scan_raw,
+        "FDT-down ACK/event diagnostic boundary is missing",
+        failures,
+    )
+
+    for marker in (
+        "#define GOODIX550C_ENABLE_MANUAL_FDT_POLL 0",
+        'g_getenv ("GOODIX550C_ALLOW_MANUAL_FDT_POLL"), "1"',
+    ):
+        require(marker in safety, f"manual-FDT gate missing: {marker}", failures)
+    for marker in (
+        "GOODIX_MANUAL_FDT_CONFIRMATIONS 2",
+        "GOODIX_MANUAL_FDT_POLL_DELAY_MS 100",
+        "goodix_550c_manual_fdt_poll_allowed ()",
+        "goodix_cmd_fdt_manual (ssm, dev, TRUE",
+        "down = changed_pairs > 0",
+        "state->consecutive >= GOODIX_MANUAL_FDT_CONFIRMATIONS",
+        "state->provisional_baseline",
+        "GOODIX_REF_CAPTURE_REG_OFF_DONE",
+        "Manual FDT finger-down poll armed",
+        "Manual FDT finger-up poll armed",
+        "Manual FDT finger-up confirmed",
+    ):
+        require(marker in scan_raw, f"manual-FDT invariant missing: {marker}", failures)
+    require(
+        "goodix_device_measure_fdt_delta" in calibration
+        and "if (delta > threshold)" in calibration,
+        "manual-FDT delta helper or strict threshold boundary is missing",
+        failures,
+    )
+    require(
+        "goodix_run_cmd_cancellable" not in transport_raw
+        and "goodix_cmd_fdt_manual_cancellable" not in commands_raw,
+        "manual polling may abandon a partially received command transaction",
+        failures,
+    )
+    require(
+        all(
+            marker not in scan_raw
+            for marker in (
+                "touch_flag=0x",
+                "touch_flag == 0",
+                "max_delta=",
+                "changed_pairs=",
+            )
+        ),
+        "manual-FDT diagnostics expose channel/contact measurements",
+        failures,
+    )
+    require(
+        "ACK diagnostic:" in transport_raw
+        and "goodix_550c_manual_fdt_poll_allowed ()" in transport_raw,
+        "ACK flags are not neutrally diagnosed under the experimental gate",
+        failures,
+    )
+
     pids = set(re.findall(r"\.pid\s*=\s*0x([0-9a-fA-F]+)", device))
     require(pids == {"550c"}, f"driver binds unexpected USB PIDs: {sorted(pids)}", failures)
 
@@ -202,8 +297,18 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         )
 
     require(
-        "option('goodix550c_volatile_init'" in options and "value: false" in options,
+        meson_option_is_default_off(options, "goodix550c_volatile_init"),
         "Meson volatile-init option is missing or not default-off",
+        failures,
+    )
+    require(
+        meson_option_is_default_off(options, "goodix550c_manual_fdt_poll"),
+        "Meson manual-FDT option is missing or not default-off",
+        failures,
+    )
+    require(
+        "-DGOODIX550C_ENABLE_MANUAL_FDT_POLL=1" in lib_meson,
+        "Meson manual-FDT opt-in does not enable the compile-time gate",
         failures,
     )
     require(

@@ -1,0 +1,6 @@
+GOODIX550C_TOD_1.0 {
+  global:
+    fpi_tod_shared_driver_get_type;
+  local:
+    *;
+};

@@ -11,11 +11,12 @@ LIBFPRINT_COMMIT="0c97a47d8ef405cd577b87058c1e89cae9d242e7"
 LIBFPRINT_REF="v1.94.10"
 PREPARE_ONLY=0
 VOLATILE_INIT=false
+MANUAL_FDT_POLL=false
 STAGE_DIR=""
 
 usage() {
     printf '%s\n' \
-        "Usage: $0 [--prepare-only] [--allow-volatile-init] [--stage-dir PATH]" \
+        "Usage: $0 [--prepare-only] [--allow-volatile-init] [--allow-manual-fdt-poll] [--stage-dir PATH]" \
         "" \
         "Outputs only below $PROJECT_ROOT/build/." \
         "--allow-volatile-init compiles the volatile path, but runtime still" \
@@ -29,6 +30,9 @@ while (($#)); do
             ;;
         --allow-volatile-init)
             VOLATILE_INIT=true
+            ;;
+        --allow-manual-fdt-poll)
+            MANUAL_FDT_POLL=true
             ;;
         --stage-dir)
             shift
@@ -47,6 +51,13 @@ while (($#)); do
     esac
     shift
 done
+
+if [[ ! -d "$DRIVER_REPO/.git" || ! -d "$LIBFPRINT_REPO/.git" ]]; then
+    printf '%s\n' \
+        'Pinned upstream source is missing.' \
+        'Run scripts/fetch_upstream_sources.sh first.' >&2
+    exit 1
+fi
 
 mkdir -p "$PROJECT_ROOT/build"
 if [[ -z "$STAGE_DIR" ]]; then
@@ -89,10 +100,21 @@ mkdir -p "$DRIVER_STAGE" "$LIBFPRINT_STAGE"
 git -C "$DRIVER_REPO" archive "$DRIVER_COMMIT" | tar -x -C "$DRIVER_STAGE"
 git -C "$LIBFPRINT_REPO" archive "$LIBFPRINT_COMMIT" | tar -x -C "$LIBFPRINT_STAGE"
 
-patch --batch --forward -d "$DRIVER_STAGE" -p1 \
-    < "$PROJECT_ROOT/patches/goodix-550c/0001-goodix53x5-add-fail-closed-550c-policy.patch"
-patch --batch --forward -d "$DRIVER_STAGE" -p1 \
-    < "$PROJECT_ROOT/patches/goodix-550c/0003-goodix53x5-harden-secret-loading.patch"
+while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
+    [[ -z "$patch_name" || "$patch_name" == \#* ]] && continue
+    case "$patch_name" in
+        */*|*..*)
+            printf 'Invalid driver patch name in driver-series: %s\n' "$patch_name" >&2
+            exit 1
+            ;;
+    esac
+    patch_file="$PROJECT_ROOT/patches/goodix-550c/$patch_name"
+    if [[ ! -f "$patch_file" ]]; then
+        printf 'Driver patch listed but absent: %s\n' "$patch_name" >&2
+        exit 1
+    fi
+    patch --batch --forward -d "$DRIVER_STAGE" -p1 < "$patch_file"
+done < "$PROJECT_ROOT/patches/goodix-550c/driver-series"
 patch --batch --forward -d "$LIBFPRINT_STAGE" -p1 \
     < "$PROJECT_ROOT/patches/goodix-550c/0002-libfprint-v1.94.10-integration.patch"
 
@@ -140,6 +162,7 @@ meson setup "$BUILD_DIR" "$LIBFPRINT_STAGE" \
     --buildtype=debugoptimized \
     -Ddrivers=goodix53x5 \
     -Dgoodix550c_volatile_init="$VOLATILE_INIT" \
+    -Dgoodix550c_manual_fdt_poll="$MANUAL_FDT_POLL" \
     -Dudev_hwdb=disabled \
     -Dudev_rules=disabled \
     -Dintrospection=false \
@@ -155,6 +178,49 @@ cc -std=c11 -Wall -Wextra -Werror \
     $(pkg-config --cflags --libs gio-2.0 openssl) \
     -o "$BUILD_DIR/test-goodix550c-tls"
 "$BUILD_DIR/test-goodix550c-tls"
+
+# Compile the patched production command path and protocol encoder directly.
+# The forced test shim replaces only the final transport submission with an
+# in-memory capture, so this regression cannot access USB.
+cc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+    -ffunction-sections -fdata-sections \
+    -D_GNU_SOURCE \
+    -I"$BUILD_DIR" \
+    -I"$LIBFPRINT_STAGE" \
+    -I"$BUILD_DIR/libfprint" \
+    -I"$LIBFPRINT_STAGE/libfprint" \
+    -I"$BUILD_DIR/libfprint/nbis/include" \
+    -I"$LIBFPRINT_STAGE/libfprint/nbis/include" \
+    -I"$BUILD_DIR/libfprint/nbis/libfprint-include" \
+    -I"$LIBFPRINT_STAGE/libfprint/nbis/libfprint-include" \
+    -I"$integrated_driver" \
+    -include "$PROJECT_ROOT/tests/native/goodix550c_fdt_down_test_shim.h" \
+    "$PROJECT_ROOT/tests/native/test_goodix550c_fdt_down.c" \
+    "$integrated_driver/goodix53x5-commands.c" \
+    "$integrated_driver/goodix53x5-proto.c" \
+    $(pkg-config --cflags --libs gio-2.0 gusb) \
+    -Wl,--gc-sections \
+    -o "$BUILD_DIR/test-goodix550c-fdt-down"
+"$BUILD_DIR/test-goodix550c-fdt-down"
+
+cc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+    -ffunction-sections -fdata-sections \
+    -D_GNU_SOURCE -DGOODIX550C_ENABLE_MANUAL_FDT_POLL=1 \
+    -I"$BUILD_DIR" \
+    -I"$LIBFPRINT_STAGE" \
+    -I"$BUILD_DIR/libfprint" \
+    -I"$LIBFPRINT_STAGE/libfprint" \
+    -I"$BUILD_DIR/libfprint/nbis/include" \
+    -I"$LIBFPRINT_STAGE/libfprint/nbis/include" \
+    -I"$BUILD_DIR/libfprint/nbis/libfprint-include" \
+    -I"$LIBFPRINT_STAGE/libfprint/nbis/libfprint-include" \
+    -I"$integrated_driver" \
+    "$PROJECT_ROOT/tests/native/test_goodix550c_manual_fdt.c" \
+    "$integrated_driver/goodix53x5-calibration.c" \
+    $(pkg-config --cflags --libs gio-2.0 gusb openssl) \
+    -Wl,--gc-sections \
+    -o "$BUILD_DIR/test-goodix550c-manual-fdt"
+"$BUILD_DIR/test-goodix550c-manual-fdt"
 
 # Build the minimal exact-device harness against this build tree.  Its RUNPATH is
 # relative to itself, so it cannot silently fall back to the host libfprint.

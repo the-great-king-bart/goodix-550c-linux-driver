@@ -1,0 +1,41 @@
+--- a/drivers/goodix53x5/goodix53x5-commands.c
++++ b/drivers/goodix53x5/goodix53x5-commands.c
+@@ -208,8 +208,21 @@ goodix_cmd_fdt_down_setup (FpiSsm *ssm, FpDevice *dev,
+                            const guint8 *fdt_base)
+ {
++  FpiDeviceGoodix53x5 *self = FPI_DEVICE_GOODIX53X5 (dev);
+   guint8 *payload;
+   gsize payload_len;
+ 
++  /* GF5288 firmware 13021 expects the live-generated threshold as the
++   * complete 0x32 payload.  The 0x0c,0x01 prefix belongs to the sibling
++   * 53x5/known-13022 layout.  The 550c open path hard-gates firmware 13021
++   * before this command is reachable. */
++  if (self->variant == GOODIX_VARIANT_TLS_PSK)
++    {
++      goodix_run_cmd (ssm, dev, GOODIX_PROTO_CATEGORY_FDT,
++                      GOODIX_PROTO_CMD_FDT_DOWN, fdt_base,
++                      GOODIX_FDT_BASE_LEN, FALSE);
++      return;
++    }
++
+   goodix_build_fdt_payload (0x0C, fdt_base, &payload, &payload_len);
+   goodix_run_cmd (ssm, dev, GOODIX_PROTO_CATEGORY_FDT,
+                   GOODIX_PROTO_CMD_FDT_DOWN, payload, payload_len, FALSE);
+--- a/drivers/goodix53x5/goodix53x5-scan.c
++++ b/drivers/goodix53x5/goodix53x5-scan.c
+@@ -257,9 +257,11 @@ goodix_finger_wait_ssm_handler (FpiSsm   *ssm,
+       break;
+ 
+     case GOODIX_FINGER_WAIT_RECV_EVENT:
+-      /* Wait for FDT DOWN event with cancellable. The shutdown jump target
+-       * matches the historical RX-callback behavior of jumping to the
+-       * finger-up SLEEP state index on post-result cancellation. */
++      /* The 0x32 ACK was validated by the command sub-SSM. Wait for its later
++       * FDT DOWN event with the action cancellable. The shutdown jump target
++       * matches the historical RX-callback behavior of jumping to the
++       * finger-up SLEEP state index on post-result cancellation. */
++      fp_dbg ("FDT down ACK validated; event read posted");
+       self->blocking_ssm = ssm;
+       self->blocking_resume_state = GOODIX_FINGER_WAIT_FDT_DOWN_SETUP;
+       self->blocking_shutdown_state = GOODIX_FINGER_UP_SLEEP;

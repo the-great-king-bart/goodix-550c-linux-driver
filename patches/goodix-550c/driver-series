@@ -1,0 +1,5 @@
+# Driver-repository patches, applied in this exact order.
+0001-goodix53x5-add-fail-closed-550c-policy.patch
+0003-goodix53x5-harden-secret-loading.patch
+0004-goodix550c-use-13021-fdt-down-layout.patch
+0005-goodix550c-add-guarded-manual-fdt-poll.patch

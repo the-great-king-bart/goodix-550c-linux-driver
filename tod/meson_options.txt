@@ -1,0 +1,32 @@
+option(
+  'driver_source_root',
+  type: 'string',
+  description: 'Prepared allowlisted Goodix driver source root',
+)
+option(
+  'sdk_root',
+  type: 'string',
+  description: 'Extracted exact Ubuntu libfprint TOD development sysroot',
+)
+option(
+  'core_library',
+  type: 'string',
+  description: 'Exact installed libfprint-2.so.2 used for the ABI link gate',
+)
+option(
+  'tod_library',
+  type: 'string',
+  description: 'Exact installed libfprint-2-tod.so.1 used for the ABI link gate',
+)
+option(
+  'goodix550c_volatile_init',
+  type: 'boolean',
+  value: false,
+  description: 'Compile volatile initialization; runtime opt-in remains required',
+)
+option(
+  'goodix550c_manual_fdt_poll',
+  type: 'boolean',
+  value: false,
+  description: 'Compile manual FDT polling; runtime opt-in remains required',
+)

@@ -13,8 +13,10 @@ running it. It targets these immutable upstream inputs:
   `0c97a47d8ef405cd577b87058c1e89cae9d242e7`
 
 `0001`, the additional secret-loader hardening in `0003`, the firmware-13021
-FDT-down layout correction in `0004`, and the guarded manual-FDT fallback in
-`0005` apply to the driver repository in the order recorded by `driver-series`.
+FDT-down layout correction in `0004`, the guarded manual-FDT fallback in `0005`,
+the gated whole-frame capture diagnostics in `0006`, and the manual-FDT contact
+settle window in `0007` apply to the driver repository in the order recorded by
+`driver-series`.
 `0002` applies only to a pristine libfprint v1.94.10
 tree. Both build pipelines verify the pinned driver revision and apply the same
 ordered driver series before copying an explicit source allowlist; the upstream
@@ -88,6 +90,22 @@ matters because `delta_fdt` is 0 whenever the decoded OTP reports no spread and 
 comparison is a strict `>`; stability then means two bit-identical readings. Only
 the finger-down wait is unbounded, matching the asynchronous path it replaces, and
 it ends on cancellation.
+
+Confirmed contact does not reach the capture directly. `0007` holds
+`GOODIX_MANUAL_FDT_DOWN_SETTLE_MS` (300 ms) first, because contact is declared as
+soon as one channel pair moves — the leading edge of a finger still coming down —
+and the capture used to follow that edge by 78-80 ms, recording whatever fraction of
+the pad had landed. The window runs no command transaction, so no reply can be
+stranded and cancellation is honoured directly. A finger withdrawn during the window
+yields a frame the coverage gate rejects, which is what withdrawing it a moment
+earlier already did.
+
+`0006` adds whole-frame diagnostics for each decoded reference and capture frame
+under the same experimental gate: minimum, maximum, mean, clipped fraction, a 32-bit
+checksum that only distinguishes a fresh frame from a repeat, and the readout gap.
+Every figure is frame-global; per-region or per-channel numbers would describe ridge
+positions. The audit requires the gate check inside that function specifically, so a
+guard belonging to a neighbouring function cannot satisfy it.
 
 Polling cancellation is checked before and after each whole command, never between
 its request, ACK, and data reply. Logs contain only phase transitions and bounded

@@ -21,6 +21,7 @@ TOD_MESON = ROOT / "tod" / "meson.build"
 TOD_OPTIONS = ROOT / "tod" / "meson_options.txt"
 BUS_CONFIG = ROOT / "tod" / "private-bus.conf"
 TOD_HARNESS = ROOT / "tools" / "goodix550c_tod_open_close.c"
+TOD_ENROLL_HARNESS = ROOT / "tools" / "goodix550c_tod_enroll.c"
 
 
 def _load_verifier():
@@ -201,6 +202,28 @@ def test_tod_physical_runner_and_harness_are_explicit_and_fail_closed():
     )
     assert result.returncode == 0
     assert "--allow-volatile-init" in result.stdout
+
+
+def test_enroll_harness_cues_the_lift_on_time_and_exits_beside_live_threads():
+    harness = TOD_ENROLL_HARNESS.read_text(encoding="utf-8")
+
+    # The finger stays PRESENT for the whole bounded finger-up wait, so a
+    # status-driven prompt reaches the operator only after that wait has
+    # already succeeded or expired. Both stage outcomes must cue the lift.
+    assert harness.count(">>> LIFT your finger off the sensor.") == 2
+    assert 'puts (">>> LIFT' not in harness
+    assert ">>> Finger detected" not in harness
+    assert "Finger detected; hold until the stage is reported." in harness
+
+    # OpenCV worker threads from the module outlive the harness and cannot be
+    # joined, so process exit must not run global destructors beside them.
+    assert "_exit (enrolled_ok ? 0 : 1)" in harness
+    assert "return enrolled_ok ? 0 : 1;" not in harness
+    assert "#include <unistd.h>" in harness
+
+    # The template is still never persisted.
+    for forbidden in ("fp_print_serialize", "fp_print_to_file", "g_file_set_contents", "fopen"):
+        assert forbidden not in harness
 
 
 def test_private_bus_smoke_is_non_activating_and_hides_usb():

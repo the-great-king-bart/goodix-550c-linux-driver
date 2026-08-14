@@ -213,7 +213,7 @@ printed, or hashed. It is a capture test, not a way to register a fingerprint.
 
 ```bash
 sudo scripts/run_goodix550c_tod_open_close.sh \
-  --stage-dir build/goodix550c-tod-manual-fdt-v4 \
+  --stage-dir build/goodix550c-tod-capture-diag \
   --psk-file research/secrets/goodix550c.psk \
   --expected-psk-hash research/artifacts/psk-hash-current.json \
   --allow-volatile-init \
@@ -221,19 +221,30 @@ sudo scripts/run_goodix550c_tod_open_close.sh \
   --enroll --debug
 ```
 
-`--enroll` requires `--allow-manual-fdt-poll`. Keep the pad **completely clear**
-until the harness prints `PLACE your finger on the sensor now` — before that it is
-establishing two no-finger reference baselines, and contact corrupts them. Then
-place, hold until the stage is reported, lift, and repeat. `--debug` adds driver
-diagnostics; it logs no key, raw reading, image, or template. The run is bounded at
-240 seconds.
+`--enroll` requires `--allow-manual-fdt-poll`. `--debug` adds driver diagnostics; it
+logs no key, raw reading, image, or template. The run is bounded at 240 seconds.
 
-Current state: contact detection and capture work, but enrollment does not finish.
-After the first two to four stages, every capture decodes as a blank frame and is
-rejected with "the finger was not centered properly" at a measured 95.4% non-contact
-area. This is a capture-path defect under investigation, not a placement problem —
-do not work around it by loosening the coverage gate, which would enroll unusable
-templates. See DOCUMENTATION.md for the evidence.
+Operating it, in order:
+
+1. Keep the pad **completely clear** until the harness prints
+   `>>> PLACE your finger on the sensor now`. Before that it establishes two
+   no-finger reference baselines, and contact corrupts them.
+2. Rest your finger on the sensor. No need to press hard — the driver waits
+   `GOODIX_MANUAL_FDT_DOWN_SETTLE_MS` (300 ms) for the contact to settle before it
+   reads the pad.
+3. Lift as soon as it prints `>>> LIFT your finger off the sensor.` The finger-up
+   wait is bounded at 600 polls (60 s); holding past that fails the enrollment.
+4. Repeat for all 8 stages.
+
+Watch the harness output directly. Its prompts fire at the moment the operator must
+act, so anything that relays them second-hand adds latency against that 60 s bound.
+
+Current state: **a full 8-stage enrollment passes**, zero rejections, every frame at
+0.0% non-contact. If a stage is ever rejected with "the finger was not centered
+properly", that is the coverage gate reporting real partial contact — do not work
+around it by loosening `GOODIX_ENROLL_MAX_CLIPPED_FRACTION`, which would enroll
+unusable templates and raise false-accept risk. See DOCUMENTATION.md for the
+measurements.
 
 ## Offline packet preview
 

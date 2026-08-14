@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 09:10:00 +0200
+Subject: [PATCH] goodix550c: log whole-frame capture-path diagnostics
+
+Enrollment on firmware 13021 accepts the first two to four stages of a
+session and then rejects every later capture with an almost completely
+railed raw frame (~95.4% of pixels at ADC full scale), repeatably and with
+no intermediate values. The clipped fraction is measured on the raw frame
+alone, so the reference frame cannot be the cause; what remains untested is
+whether the reference frame rails as well, whether the sensor returns a
+stale buffer, and how the readout gap correlates with the failure.
+
+Report whole-frame scalars for each decoded reference and capture frame so
+one instrumented run can separate those cases. All figures describe the
+frame as a whole: per-region or per-channel numbers would describe ridge
+positions, which the diagnostics policy forbids. The checksum only
+distinguishes a fresh frame from a repeat of the previous one.
+
+The diagnostic runs under the existing experimental manual-FDT gate, which
+is default-off at both compile time and run time and is the only
+configuration in which this firmware reaches a capture.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -217,4 +217,8 @@
+   /* Enrollment tracking */
+   GPtrArray *enroll_features; /* array of GBytes* serialized SIGFM features */
+   gint       enroll_stage;
++
++  /* Monotonic time of the previously decoded frame, for the capture-path
++   * diagnostic only. Zero until the first frame of a session is decoded. */
++  gint64     last_frame_readout_us;
+ };
+--- a/drivers/goodix53x5/goodix53x5-scan.c
++++ b/drivers/goodix53x5/goodix53x5-scan.c
+@@ -125,6 +125,69 @@
+ static void goodix_finger_up_ssm_handler (FpiSsm *ssm, FpDevice *dev);
+ static void goodix_deactivate_ssm_handler (FpiSsm *ssm, FpDevice *dev);
+ 
++/* ========================================================================
++ * Capture-path diagnostic
++ * ======================================================================== */
++
++/**
++ * goodix_550c_log_frame_stats:
++ *
++ * Report whole-frame scalars for a decoded raw frame. This exists for the
++ * firmware-13021 capture-path investigation, where enrollment stages past
++ * the first few see a raw capture frame that is almost entirely at ADC full
++ * scale while the early stages of the same session are fine.
++ *
++ * Every figure describes the frame as a whole. Per-region or per-channel
++ * numbers would describe where the ridges are, which the diagnostics policy
++ * forbids; the checksum only tells a freshly read frame from a repeat of the
++ * previous one, and 32 bits cannot reconstruct any part of a
++ * GOODIX_SENSOR_PIXELS-pixel frame.
++ *
++ * Gated on the experimental manual-FDT policy. That gate is default-off at
++ * both compile time and run time, and it is the only configuration in which
++ * this firmware reaches a capture at all, so it scopes the diagnostic to
++ * exactly the runs that need it.
++ */
++static void
++goodix_550c_log_frame_stats (FpiDeviceGoodix53x5 *self,
++                             const guint16       *img12,
++                             const gchar         *phase,
++                             guint16              dac)
++{
++  guint16 lo = G_MAXUINT16;
++  guint16 hi = 0;
++  guint64 total = 0;
++  guint32 checksum = 0;
++  int clipped = 0;
++  gint64 now, gap_us;
++
++  if (!goodix_550c_manual_fdt_poll_allowed ())
++    return;
++
++  for (int i = 0; i < GOODIX_SENSOR_PIXELS; i++)
++    {
++      guint16 value = img12[i];
++
++      lo = MIN (lo, value);
++      hi = MAX (hi, value);
++      total += value;
++      checksum = checksum * 31u + value;
++      if (value >= GOODIX_RAW12_CLIP)
++        clipped++;
++    }
++
++  now = g_get_monotonic_time ();
++  gap_us = self->last_frame_readout_us != 0 ? now - self->last_frame_readout_us : 0;
++  self->last_frame_readout_us = now;
++
++  fp_dbg ("Capture-path diagnostic: %s frame stage=%d dac=0x%04x min=%u max=%u "
++          "mean=%.1f clipped=%.1f%% sum=%08x gap=%" G_GINT64_FORMAT "ms",
++          phase, self->enroll_stage, dac, lo, hi,
++          (double) total / GOODIX_SENSOR_PIXELS,
++          (100.0 * clipped) / GOODIX_SENSOR_PIXELS,
++          checksum, gap_us / 1000);
++}
++
+ static gboolean
+ goodix_manual_fdt_require_baseline (FpiSsm   *ssm,
+                                     FpDevice *dev)
+@@ -497,6 +560,8 @@
+             return;
+           }
+ 
++        goodix_550c_log_frame_stats (self, img12, "reference", self->calib.dac_l);
++
+         g_clear_pointer (&self->reference_image, g_free);
+         self->reference_image = g_steal_pointer (&img12);
+ 
+@@ -800,6 +865,8 @@
+               return;
+             }
+ 
++          goodix_550c_log_frame_stats (self, img12, "capture", self->calib.dac_h);
++
+           img8 = goodix_device_image_to_8bit (img12, self->reference_image);
+           self->captured_clipped_fraction =
+             goodix_device_image_clipped_fraction (img12);
+

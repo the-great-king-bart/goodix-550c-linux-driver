@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 10:05:00 +0200
+Subject: [PATCH] goodix550c: let manual-FDT contact settle before capturing
+
+The manual fallback declares contact as soon as one FDT channel pair moves,
+which is the leading edge of a finger that is still coming down, and the
+capture followed that edge by roughly 80ms in every instrumented placement.
+The frame therefore recorded whatever fraction of the pad had landed by then.
+Measured non-contact areas on placements that reached full coverage a moment
+later were 38.6%, 67.3% and 87.2%, against a 10% enrollment limit, while
+placements that were already resting on the pad when the poll armed measured
+0.0%.
+
+Hold for a fixed settle window after contact is confirmed, then capture. The
+window runs no command transaction, so no reply can be stranded and
+cancellation is honoured directly. A finger withdrawn during the window
+yields a frame the coverage gate rejects, which is what withdrawing it a
+moment earlier already did.
+
+This replaces the earlier reading of these rejections as an image-readout
+defect. Both readouts were instrumented and the reference frame is clean on
+every stage, so the rejected frames record real partial contact rather than a
+stale or blank buffer.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-scan.c
++++ b/drivers/goodix53x5/goodix53x5-scan.c
+@@ -34,6 +34,14 @@
+ #define GOODIX_MANUAL_FDT_CONFIRMATIONS 2
+ #define GOODIX_MANUAL_FDT_LOG_RETRY_INTERVAL 50
+ 
++/* Contact is declared as soon as one FDT channel pair moves, which is the
++ * leading edge of a finger still coming down. The capture used to follow that
++ * edge by about 80ms, so the frame recorded whatever fraction of the pad had
++ * landed by then: measured non-contact areas of 38.6%, 67.3% and 87.2% on
++ * placements that reached full coverage a moment later. Let the pad finish
++ * loading before reading it. */
++#define GOODIX_MANUAL_FDT_DOWN_SETTLE_MS 300
++
+ /* Phases that wait for the pad to settle must terminate on their own: the
+  * operator is not asked for contact there, so an unstable pad would otherwise
+  * poll forever without ever reporting a result. Only the finger-down wait is
+@@ -65,6 +73,7 @@
+   GOODIX_FINGER_WAIT_VALIDATE,
+   GOODIX_FINGER_WAIT_POLL_DOWN_REQUEST,
+   GOODIX_FINGER_WAIT_POLL_DOWN_VALIDATE,
++  GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE,
+   GOODIX_FINGER_WAIT_NUM_STATES,
+ } GoodixFingerWaitState;
+ 
+@@ -760,7 +769,9 @@
+             fpi_device_report_finger_status_changes (dev,
+                                                      FP_FINGER_STATUS_PRESENT,
+                                                      FP_FINGER_STATUS_NEEDED);
+-            fpi_ssm_mark_completed (ssm);
++            fpi_ssm_jump_to_state_delayed (ssm,
++                                           GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE,
++                                           GOODIX_MANUAL_FDT_DOWN_SETTLE_MS);
+             return;
+           }
+ 
+@@ -771,6 +782,18 @@
+                                        GOODIX_MANUAL_FDT_POLL_DELAY_MS);
+       }
+       break;
++
++    case GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE:
++      /* The settle window runs no transaction, so there is no reply to strand
++       * and cancellation can be honoured directly. A finger withdrawn during
++       * the window simply yields a frame the coverage gate rejects, which is
++       * the same outcome as withdrawing it a moment earlier. */
++      if (goodix_manual_fdt_check_cancelled (ssm, dev))
++        return;
++      fp_dbg ("Manual FDT contact settled for %dms; capturing",
++              GOODIX_MANUAL_FDT_DOWN_SETTLE_MS);
++      fpi_ssm_mark_completed (ssm);
++      break;
+     }
+ }
+ 
+

@@ -491,6 +491,29 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
             failures,
         )
 
+    # The finger stays PRESENT for the whole bounded finger-up wait, so a
+    # status-driven lift prompt only arrives once that wait has already
+    # succeeded or expired. The instruction has to come from the stage
+    # callback, once per outcome branch.
+    require(
+        enroll_harness.count(">>> LIFT your finger off the sensor.") == 2,
+        "TOD enrollment harness does not prompt the lift from both stage outcomes",
+        failures,
+    )
+    require(
+        'puts (">>> LIFT' not in enroll_harness and ">>> Finger detected" not in enroll_harness,
+        "TOD enrollment harness issues operator instructions from the finger-status callback",
+        failures,
+    )
+    # Worker threads from the module's OpenCV dependency outlive this harness
+    # and cannot be joined, so global teardown must not run beside them.
+    require(
+        "_exit (enrolled_ok ? 0 : 1)" in enroll_harness
+        and "return enrolled_ok ? 0 : 1;" not in enroll_harness,
+        "TOD enrollment harness runs global destructors alongside unjoinable threads",
+        failures,
+    )
+
     runner = read_text(TOD_RUNNER, failures)
     for marker in (
         "--allow-volatile-init",

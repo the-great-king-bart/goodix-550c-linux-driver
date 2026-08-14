@@ -1040,6 +1040,56 @@ Four earlier attempts (`4`, `1`, `7`, `0`) are recorded but unattributed. If any
 those were the enrolled finger, they were false rejects, and the false-reject rate
 matters as much as the false-accept rate for daily use.
 
+### Host validation
+
+Both stages were taken on 2026-08-15. Against Ubuntu's own `fprintd.service`, with
+no sandbox and no private bus:
+
+```text
+Enrollment complete with 16 samples          16 stages in 46s
+Identify best SIGFM score: 8903 (best_min: 150)
+report_verify_status: result verify-match
+```
+
+Seven empty reference frames were absorbed during that enrollment and four stages
+asked for a re-place, against 25 empty frames before patch `0013`.
+
+With the login factor enabled, `/etc/pam.d/common-auth` reads:
+
+```text
+auth [success=2 default=ignore]  pam_fprintd.so max-tries=1 timeout=10
+auth [success=1 default=ignore]  pam_unix.so nullok try_first_pass
+auth requisite                   pam_deny.so
+auth required                    pam_permit.so
+```
+
+A success from `pam_fprintd` skips both `pam_unix` and `pam_deny` and lands on
+`pam_permit`. Any other outcome falls through to `pam_unix`. Observed directly on
+the first `sudo` after enabling, where no finger was presented:
+
+```text
+[sudo] Place your finger on the fingerprint reader
+[sudo] Verification timed out
+[sudo: authenticate] Password:
+```
+
+#### Ten seconds is too short for a relayed cue
+
+`pam_fprintd` is configured with `timeout=10`. Three attempts to drive a PAM
+authentication from this session failed with `candidate=0` across every poll,
+meaning the pad stayed empty for the whole window — the cue reached the operator
+after it had closed. The same operator matched at 8903 through the windowed app
+seconds earlier, so this is a cue-latency limit and not a driver fault. PAM
+authentication has to be exercised by the operator at a prompt they can see.
+
+#### Scope: every sudo now waits
+
+`pam-auth-update` installs the stanza into `common-auth`, which every PAM service
+includes. A scripted `sudo` that supplies a password on stdin therefore blocks for
+the full ten seconds before falling through. Restricting the factor to the
+graphical login and screensaver would avoid that tax; it is left as-is until the
+operator decides.
+
 ## Verification
 
 ```text

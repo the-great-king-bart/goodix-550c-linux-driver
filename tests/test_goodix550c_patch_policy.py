@@ -20,6 +20,7 @@ FDT_SETTLE_PATCH = PATCH_DIR / "0007-goodix550c-settle-manual-fdt-contact-before
 REPLY_FRAMING_PATCH = PATCH_DIR / "0008-goodix550c-report-reply-framing.patch"
 ENROLL_COVERAGE_PATCH = PATCH_DIR / "0009-goodix550c-cover-pad-with-more-enroll-samples.patch"
 RETRY_REASON_PATCH = PATCH_DIR / "0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch"
+REFERENCE_SIGNAL_PATCH = PATCH_DIR / "0011-goodix550c-refuse-empty-reference-frame.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -301,6 +302,20 @@ def test_a_lifted_finger_is_reported_differently_from_a_misplaced_one():
     assert "GOODIX_ENROLL_MAX_CLIPPED_FRACTION 0.10" not in removed
 
 
+def test_an_empty_reference_frame_is_never_stored():
+    added = added_lines(REFERENCE_SIGNAL_PATCH)
+
+    assert "#define GOODIX_REFERENCE_MIN_MEAN 200" in added
+    assert "#define GOODIX_REFERENCE_MAX_RETRIES 8" in added
+    assert "goodix_reference_frame_has_signal" in added
+
+    # The check must gate the store, and the condition clears by itself, so it
+    # retries rather than failing the operator's action at the first empty one.
+    assert "if (!goodix_reference_frame_has_signal (img12))" in added
+    assert "GOODIX_REF_CAPTURE_REG_ON" in added
+    assert "self->reference_retries = 0;" in added
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -328,6 +343,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         REPLY_FRAMING_PATCH.name,
         ENROLL_COVERAGE_PATCH.name,
         RETRY_REASON_PATCH.name,
+        REFERENCE_SIGNAL_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

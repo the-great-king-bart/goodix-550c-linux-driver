@@ -12,6 +12,7 @@
 
 #include <glib.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #define EXPECTED_DRIVER "goodix53x5"
 #define EXPECTED_NAME "Goodix HTK32 Fingerprint Sensor"
@@ -47,12 +48,17 @@ on_finger_status_changed (GObject    *object,
   (void) pspec;
   (void) user_data;
 
+  /* These report what the device observed, so they are confirmations rather
+   * than instructions. In particular the finger stays PRESENT throughout the
+   * finger-up wait, so "hold still" here would tell the operator the opposite
+   * of what that phase needs; the lift instruction is issued from the stage
+   * callback below, which is what actually ends a stage. */
   if (status & FP_FINGER_STATUS_NEEDED)
     puts (">>> PLACE your finger on the sensor now.");
   else if (status & FP_FINGER_STATUS_PRESENT)
-    puts (">>> Finger detected; hold still.");
+    puts ("    Finger detected; hold until the stage is reported.");
   else
-    puts (">>> LIFT your finger off the sensor.");
+    puts ("    Finger released.");
 
   fflush (stdout);
 }
@@ -69,11 +75,15 @@ on_enroll_progress (FpDevice *device,
   (void) device;
   (void) print;
 
+  /* A stage ends here, and the driver waits for the pad to clear before it
+   * starts the next one. That wait is bounded, so the lift instruction has to
+   * go out now rather than when the device later reports the finger gone. */
   if (error != NULL)
-    printf ("Stage %d/%d rejected, retry: %s\n",
+    printf ("Stage %d/%d rejected, retry: %s\n>>> LIFT your finger off the sensor.\n",
             completed_stages, total_stages, error->message);
   else
-    printf ("Stage %d/%d captured.\n", completed_stages, total_stages);
+    printf ("Stage %d/%d captured.\n>>> LIFT your finger off the sensor.\n",
+            completed_stages, total_stages);
 
   fflush (stdout);
 }
@@ -146,5 +156,16 @@ main (void)
     }
 
   puts ("Device closed cleanly through the installed Ubuntu TOD runtime.");
-  return enrolled_ok ? 0 : 1;
+  fflush (stdout);
+  fflush (stderr);
+
+  /* The device is closed and every result is reported and flushed; only global
+   * teardown remains. The TOD module links OpenCV, whose worker pool is
+   * created on the first successful capture, outlives this harness and exposes
+   * no join API. Running the exit handlers alongside those threads unmaps code
+   * they are still executing, which crashed this harness with SIGSEGV inside
+   * OPENSSL_cleanup on the first run that returned normally instead of being
+   * killed by the wrapper timeout. Terminate without global destructors: the
+   * kernel reclaims the address space, and nothing is left to flush. */
+  _exit (enrolled_ok ? 0 : 1);
 }

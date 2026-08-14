@@ -15,6 +15,8 @@ INTEGRATION_PATCH = PATCH_DIR / "0002-libfprint-v1.94.10-integration.patch"
 HARDENING_PATCH = PATCH_DIR / "0003-goodix53x5-harden-secret-loading.patch"
 FDT_13021_PATCH = PATCH_DIR / "0004-goodix550c-use-13021-fdt-down-layout.patch"
 MANUAL_FDT_PATCH = PATCH_DIR / "0005-goodix550c-add-guarded-manual-fdt-poll.patch"
+CAPTURE_DIAG_PATCH = PATCH_DIR / "0006-goodix550c-log-capture-path-diagnostics.patch"
+FDT_SETTLE_PATCH = PATCH_DIR / "0007-goodix550c-settle-manual-fdt-contact-before-capture.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -188,6 +190,68 @@ def test_manual_fdt_settle_phases_are_bounded_and_refuse_suspend():
     assert "self->manual_fdt_poll_active = TRUE;" in added
 
 
+def test_static_function_body_rule_rejects_a_guard_from_a_neighbouring_function():
+    """A per-function rule, not a substring test some other function satisfies."""
+    source = (
+        "static void\n"
+        "unguarded (int a)\n"
+        "{\n"
+        "  report (a);\n"
+        "}\n"
+        "\n"
+        "static void\n"
+        "guarded (int a)\n"
+        "{\n"
+        "  if (!allowed ())\n"
+        "    return;\n"
+        "  report (a);\n"
+        "}\n"
+    )
+
+    assert "if (!allowed ())" in VERIFIER.static_function_body(source, "guarded (int a)")
+    assert "if (!allowed ())" not in VERIFIER.static_function_body(source, "unguarded (int a)")
+    assert VERIFIER.static_function_body(source, "absent (int a)") == ""
+
+
+def test_capture_path_diagnostic_is_gated_whole_frame_and_covers_both_readouts():
+    added = added_lines(CAPTURE_DIAG_PATCH)
+
+    # Gated by the experimental policy, which is default-off at both compile
+    # time and run time, so a stock build cannot emit these numbers.
+    assert "if (!goodix_550c_manual_fdt_poll_allowed ())" in added
+    assert "goodix_550c_log_frame_stats" in added
+
+    # Both readouts are measured: the reference frame is what separates a
+    # dac_h-specific rail from a whole-sensor one.
+    assert added.count('goodix_550c_log_frame_stats (self, img12, "') == 2
+    assert 'goodix_550c_log_frame_stats (self, img12, "reference", self->calib.dac_l)' in added
+    assert 'goodix_550c_log_frame_stats (self, img12, "capture", self->calib.dac_h)' in added
+
+    # Whole-frame scalars only. Per-region or per-channel figures would
+    # describe where the ridges are.
+    for per_region in ("img12[r *", "GOODIX_SENSOR_WIDTH", "GOODIX_SENSOR_HEIGHT"):
+        assert per_region not in added
+    assert "guint32 checksum" in added
+    assert "gint64     last_frame_readout_us;" in added
+
+
+def test_manual_fdt_contact_settles_before_the_capture_reads_the_pad():
+    added = added_lines(FDT_SETTLE_PATCH)
+
+    assert "GOODIX_MANUAL_FDT_DOWN_SETTLE_MS 300" in added
+    assert "GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE," in added
+    assert "Manual FDT contact settled" in added
+
+    # Confirmation must route through the settle window, not straight to the
+    # capture, which is what recorded partially landed fingers.
+    assert "GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE,\n" in added
+    assert "GOODIX_MANUAL_FDT_DOWN_SETTLE_MS);" in added
+
+    # The window runs no transaction, so cancellation stays safe to honour.
+    assert "goodix_manual_fdt_check_cancelled (ssm, dev)" in added
+    assert "goodix_cmd_" not in added
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -210,6 +274,8 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         HARDENING_PATCH.name,
         FDT_13021_PATCH.name,
         MANUAL_FDT_PATCH.name,
+        CAPTURE_DIAG_PATCH.name,
+        FDT_SETTLE_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

@@ -3,3 +3,5 @@
 0003-goodix53x5-harden-secret-loading.patch
 0004-goodix550c-use-13021-fdt-down-layout.patch
 0005-goodix550c-add-guarded-manual-fdt-poll.patch
+0006-goodix550c-log-capture-path-diagnostics.patch
+0007-goodix550c-settle-manual-fdt-contact-before-capture.patch

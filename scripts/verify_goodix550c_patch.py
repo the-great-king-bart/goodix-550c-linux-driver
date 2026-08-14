@@ -73,6 +73,27 @@ def meson_option_is_default_off(options: str, name: str) -> bool:
     return re.search(r"\bvalue:\s*false\b", block) is not None
 
 
+def static_function_body(source: str, signature: str) -> str:
+    """Return the body text of one static function definition, or ``""``.
+
+    The definition is delimited by the next top-level ``static`` declaration
+    rather than by a closing brace, which brace counting would have to track
+    through strings and comments. A substring test over the whole file would
+    instead be satisfied by a guard belonging to some neighbouring function
+    and would let this one go unguarded.
+
+    The signature is matched on an identifier boundary so a name that is a
+    suffix of a longer one does not resolve to that longer function.
+    """
+    start = re.search(r"(?<![0-9A-Za-z_])" + re.escape(signature), source)
+    if start is None:
+        return ""
+
+    remainder = source[start.end() :]
+    following = re.search(r"\nstatic\s", remainder)
+    return remainder[: following.start()] if following else remainder
+
+
 def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
     failures: list[str] = []
     driver_dir = driver_tree / "drivers" / "goodix53x5"
@@ -236,6 +257,26 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         "Manual FDT finger-up confirmed",
     ):
         require(marker in scan_raw, f"manual-FDT invariant missing: {marker}", failures)
+    # Contact is declared on the leading edge of a landing finger, so the
+    # capture must not follow it immediately.
+    for marker in (
+        "GOODIX_MANUAL_FDT_DOWN_SETTLE_MS 300",
+        "GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE",
+        "Manual FDT contact settled",
+    ):
+        require(marker in scan_raw, f"manual-FDT settle invariant missing: {marker}", failures)
+    require(
+        re.search(
+            r"FP_FINGER_STATUS_NEEDED\);\s*\n\s*fpi_ssm_jump_to_state_delayed \(ssm,\s*\n"
+            r"\s*GOODIX_FINGER_WAIT_POLL_DOWN_SETTLE,\s*\n"
+            r"\s*GOODIX_MANUAL_FDT_DOWN_SETTLE_MS\);",
+            scan_raw,
+        )
+        is not None,
+        "confirmed manual-FDT contact reaches capture without the settle window",
+        failures,
+    )
+
     require(
         "goodix_device_measure_fdt_delta" in calibration
         and "if (delta > threshold)" in calibration,
@@ -265,6 +306,28 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         "ACK diagnostic:" in transport_raw
         and "goodix_550c_manual_fdt_poll_allowed ()" in transport_raw,
         "ACK flags are not neutrally diagnosed under the experimental gate",
+        failures,
+    )
+
+    frame_stats = static_function_body(
+        scan_raw, "goodix_550c_log_frame_stats (FpiDeviceGoodix53x5 *self,"
+    )
+    require(
+        "if (!goodix_550c_manual_fdt_poll_allowed ())" in frame_stats,
+        "capture-path frame diagnostic is missing or not gated by the experimental policy",
+        failures,
+    )
+    require(
+        scan_raw.count('goodix_550c_log_frame_stats (self, img12, "') == 2,
+        "capture-path frame diagnostic does not cover both the reference and capture readouts",
+        failures,
+    )
+    require(
+        all(
+            marker not in frame_stats
+            for marker in ("img12[r *", "GOODIX_SENSOR_WIDTH", "GOODIX_SENSOR_HEIGHT")
+        ),
+        "capture-path frame diagnostic measures the frame per row or column",
         failures,
     )
 

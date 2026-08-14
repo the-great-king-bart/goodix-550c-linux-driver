@@ -578,11 +578,18 @@ requirement itself. The enrollment bound is 240 s rather than the open/close 45 
 `--debug` adds `G_MESSAGES_DEBUG=all` for driver diagnostics; it changes no device
 behaviour and logs no key, raw reading, image, or template.
 
-The stage used below produced module SHA-256
+The 2026-08-13 stage (`build/goodix550c-tod-manual-fdt-v4`) produced module SHA-256
 `60db0a107fac417141df33d3e1c0181bb3d107b0153882dddb3e6f7b22ecec51`, open/close
 harness `bf0f4e6d079f636a77182f1ad4140ff0b77a93d4b5ddf93537dc6176071dfc66`, and
 enrollment harness
 `7c64e047bfcf37903a357b7a8d31d4ccea5639642678627e023852c86ef276ea`.
+
+The 2026-08-14 stage (`build/goodix550c-tod-capture-diag`), carrying patches `0006`
+and `0007` and the harness fixes, produced module SHA-256
+`adf6e0146def342014a2a354987242b3d68aaa86dfbc4108cc67d4e0bca6c83f`, the same
+open/close harness `bf0f4e6d079f636a77182f1ad4140ff0b77a93d4b5ddf93537dc6176071dfc66`,
+and enrollment harness
+`b2a0742fd6f30e72d708b5fa9b75a3d20c41ece07054d5f4eeb592af478919a7`.
 
 #### Physical enrollment result (2026-08-13)
 
@@ -601,7 +608,7 @@ This closes the firmware-13021 no-event question that blocked the project: the
 guarded fallback works, and the earlier touch-flag assumption remains correctly
 ignored.
 
-Enrollment itself does not yet complete. Both runs ended at the 240 s bound:
+Enrollment did not complete on that date. Both runs ended at the 240 s bound:
 
 ```text
 run 1 (no debug):  4 of 8 stages captured, 36 rejections
@@ -618,36 +625,99 @@ Enrollment stage rejected: 95.4% of frame has no finger contact (limit 10.0%)
 
 `goodix_device_image_clipped_fraction` counts raw12 pixels at ADC full scale
 (`GOODIX_RAW12_CLIP` 4095) across the 108x88 frame, so 95.4% means roughly 9,067 of
-9,504 pixels are railed: the decoded frame is effectively blank.
-`GOODIX_ENROLL_MAX_CLIPPED_FRACTION` is `0.10`.
+9,504 pixels are railed. `GOODIX_ENROLL_MAX_CLIPPED_FRACTION` is `0.10`.
 
-Three observations rule out finger placement and threshold tuning:
+The hypothesis recorded here was a capture-path state defect around image-readout
+re-enable and reference re-acquisition. **That hypothesis was wrong.** It rested on
+the rejections being bimodal at ~95.4%, which more data did not support. See the
+next section.
 
-- the rejected measurements are 95.3-95.4%, repeatable to a tenth of a percent;
-- the distribution is bimodal — a capture either passes well under 10% or lands at
-  ~95.4%, with nothing in between; and
-- the good captures are the early ones. Run 1 captured stages 1-4 and then
-  rejected 36 consecutive attempts; run 2 captured stages 1-2 and then rejected
-  every attempt.
+#### Capture-path instrumentation and the real cause (2026-08-14)
 
-The working hypothesis is therefore a capture-path state defect, not sensing: the
-550c branch disables image readout after each capture with
-`goodix_cmd_write_sensor_register (ssm, dev, 0x022c, 0x0a, 0x02)` and
-`goodix53x5-scan.c` clears `self->reference_image` once consumed. If readout
-re-enable or reference re-acquisition does not happen for later stages, the decode
-returns a no-contact frame, which is exactly a ~95% railed image. This is not
-believed to be caused by the manual-FDT work — contact detection succeeds every
-time and hands off to untouched upstream capture code — but that has not been
-proven and should be verified rather than assumed.
+Patch `0006` reports whole-frame scalars for every decoded reference and capture
+frame under the experimental gate: minimum, maximum, mean, clipped fraction, a
+32-bit checksum that distinguishes a fresh frame from a repeat, and the gap since
+the previous readout. All figures are frame-global; per-region or per-channel
+numbers would describe ridge positions, which the diagnostics policy forbids.
 
-The next diagnostic needs no finger: log the reference frame's own clipped fraction
-and the readout register state per stage, which confirms or kills the hypothesis in
-one run. No template was produced or stored by either run.
+The instrumented runs killed the readout hypothesis outright:
+
+- the reference frame is clean on **every** stage of every run — `clipped=0.0%`,
+  `max` 2794..2929 against a 4095 rail. The readout path never returns a blank or
+  stale frame; and
+- the checksums differ on every frame, so no buffer is ever repeated.
+
+The rejected capture frames were also not bimodal. Measured non-contact areas were
+`38.6%`, `67.3%` and `87.2%` — a continuous spread, which is what genuine partial
+contact looks like, not a stuck buffer. The earlier "bimodal, nothing in between"
+reading came from too few samples.
+
+The actual cause is in the manual-FDT fallback itself. Contact is declared on
+`changed_pairs > 0`, a single FDT channel pair moving, which is the leading edge of
+a finger still coming down; the capture then followed that edge by 78-80 ms in
+every instrumented placement. The frame therefore recorded whatever fraction of the
+pad had landed. Placements that happened to be already resting on the pad measured
+`0.0%`; placements caught mid-landing measured 38-87%.
+
+Patch `0007` holds `GOODIX_MANUAL_FDT_DOWN_SETTLE_MS` (300 ms) after contact is
+confirmed, then captures. The settle window runs no command transaction, so no
+reply can be stranded and cancellation is honoured directly. A finger withdrawn
+during the window yields a frame the coverage gate rejects, which is what
+withdrawing it a moment earlier already did.
+
+#### Physical enrollment completed (2026-08-14)
+
+**A full 8-stage enrollment succeeded.** Every stage passed on the first placement:
+
+```text
+capture stage=0  min=0 max=2404 mean=1567.5 clipped=0.0% sum=57f578bd
+capture stage=1  min=0 max=2125 mean=1469.4 clipped=0.0% sum=0d248248
+capture stage=2  min=0 max=2224 mean=1471.8 clipped=0.0% sum=17338a39
+capture stage=3  min=0 max=2257 mean=1563.5 clipped=0.0% sum=79eeb4e2
+capture stage=4  min=0 max=2216 mean=1485.9 clipped=0.0% sum=ee3d1a7d
+capture stage=5  min=0 max=2176 mean=1461.6 clipped=0.0% sum=e7ed877f
+capture stage=6  min=0 max=2295 mean=1544.5 clipped=0.0% sum=9f172400
+capture stage=7  min=0 max=2248 mean=1600.2 clipped=0.0% sum=e9d49fa3
+Enrollment complete with 8 samples
+Enrollment completed; the template is discarded without being stored.
+Device closed cleanly through the installed Ubuntu TOD runtime.
+```
+
+Zero rejections, eight distinct checksums, `EXIT=0`. The template was discarded; no
+fingerprint data was written anywhere.
+
+#### Two harness defects found by the same runs
+
+Both were exposed by the poll budget added in `0005`, which produced the first runs
+that returned normally instead of being killed by the wrapper timeout.
+
+The finger-status callback printed `Finger detected; hold still` for the whole
+finger-up wait — the opposite of what that phase needs — and printed the lift
+prompt only after the device had already observed the finger gone, which is a
+confirmation rather than an instruction. One run lost its 600-poll finger-up budget
+to that. The lift prompt now comes from the stage callback, which is what actually
+ends a stage.
+
+The harness also crashed with `SIGSEGV` inside `OPENSSL_cleanup` during
+`__run_exit_handlers`. The faulting thread was created after the first successful
+capture and its instruction pointer fell in no mapped region, so global teardown had
+unmapped code it was still executing. The module links OpenCV, whose worker pool is
+created lazily by SIGFM extraction and exposes no join API. The harness now flushes
+and calls `_exit` after the device is closed, so global destructors never run beside
+those threads.
+
+#### Operator note
+
+Prompt timing matters more than technique. The driver waits for contact to settle,
+so a normal resting placement is enough; there is no need to press hard or hold for
+several seconds. But each stage must be followed by a prompt lift: the finger-up
+wait is bounded at 600 polls (60 s), and a stage that is held past it fails the
+whole enrollment.
 
 ## Verification
 
 ```text
-project pytest:        49 passed
+project pytest:        53 passed
 offline TLS pair test: passed, correct identity/cipher/decrypt + wrong-ID rejection
 native 13021 FDT test: passed, production command branch + encoder + packed wire frame
 native manual FDT:     passed, strict boundary/malformed input/dual-gate policy
@@ -663,7 +733,9 @@ private fprintd smoke: passed with USB/udev hidden and empty GetDevices
 option default-off:    passed, per-option rule rejects a gate that defaults on
 manual-poll bounds:    passed, both settle phases fail on a spent poll budget
 live TOD open/close:   passed 3/3 against installed 1.95.1+tod1, pad clear
-live TOD enrollment:   partial, contact and capture work, stages 2-4 of 8 only
+live TOD enrollment:   passed 8/8 stages, 0 rejections, every frame 0.0% clipped
+capture-path audit:    passed, frame diagnostic gated and covers both readouts
+contact-settle audit:  passed, confirmed contact reaches capture via the window
 ```
 
 Every line above was produced after the bounded revision of patch `0005`, including
@@ -704,6 +776,8 @@ intentionally condensed.
 │   ├── 0003-goodix53x5-harden-secret-loading.patch
 │   ├── 0004-goodix550c-use-13021-fdt-down-layout.patch
 │   ├── 0005-goodix550c-add-guarded-manual-fdt-poll.patch
+│   ├── 0006-goodix550c-log-capture-path-diagnostics.patch
+│   ├── 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
 │   ├── driver-series                 # ordered driver-repository patches
 │   └── README.md                     # patch-series threat model
 ├── pyproject.toml                    # Python package/test/lint metadata
@@ -774,12 +848,23 @@ workspace-only, no-USB private fprintd smoke, and has physically opened and clos
 the sensor through Ubuntu's installed `1.95.1+tod1` runtime three times in a row.
 The existing Windows firmware and PSK were not changed.
 
-The sensor has now read a fingerprint under Linux. Manual-FDT contact detection,
-capture, decode, and SIGFM feature extraction all work, which answers the
-firmware-13021 no-event question that blocked this project. Enrollment does not yet
-complete: after the first two to four stages every subsequent capture decodes as a
-blank, ADC-railed frame and is rejected by the coverage gate. That capture-path
-defect is the current work item. No template has been produced or stored.
+**A full 8-stage enrollment has now completed under Linux**, with zero rejections
+and every captured frame at 0.0% non-contact. Manual-FDT contact detection, capture,
+decode, and SIGFM feature extraction all work, which answers the firmware-13021
+no-event question that blocked this project. The template was discarded; no
+fingerprint data has been produced or stored.
+
+The rejections that previously stopped enrollment were traced with patch `0006`'s
+frame instrumentation and were **not** the capture-path readout defect recorded
+earlier. The reference frame is clean on every stage and no frame is ever repeated;
+the rejected captures recorded genuine partial contact, because the manual fallback
+declared contact on the leading edge of a landing finger and read the pad 78-80 ms
+later. Patch `0007` settles the contact for 300 ms before capturing. The earlier
+hypothesis is retained above, marked wrong, so the reasoning that replaced it stays
+auditable.
+
+Verification of an enrolled template against a live finger is the next phase and has
+not been attempted.
 
 Module installation and PAM integration remain separate phases, and no driver has
 been installed system-wide.
@@ -796,3 +881,10 @@ per-run private directory; and a missing patch-existence check in the isolated
 build loop. The bounded patch was regenerated from the pinned base rather than
 edited in place, and the whole `driver-series` reapplies to a fresh archive
 byte-identically to the edited tree.
+
+The enrollment work additionally fixed: a finger-status callback that told the
+operator to hold still throughout the finger-up wait and issued the lift prompt only
+after the device had already seen the finger leave; and a `SIGSEGV` at process exit
+where global destructors ran beside unjoinable OpenCV worker threads. Patches `0006`
+and `0007` were likewise generated from the pinned base, and the extended
+`driver-series` again reapplies byte-identically.

@@ -289,6 +289,18 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         failures,
     )
 
+    # The reference frame is subtracted from every capture, so one that carries
+    # no signal changes the preprocessing instead of failing visibly.
+    require(
+        "goodix_reference_frame_has_signal" in scan_raw
+        and "if (!goodix_reference_frame_has_signal (img12))" in scan_raw
+        and "#define GOODIX_REFERENCE_MIN_MEAN 200" in read(
+            driver_dir / "goodix53x5-private.h", failures
+        ),
+        "an empty reference frame can still be stored and subtracted",
+        failures,
+    )
+
     require(
         "goodix_device_measure_fdt_delta" in calibration
         and "if (delta > threshold)" in calibration,

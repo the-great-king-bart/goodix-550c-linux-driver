@@ -277,6 +277,17 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         failures,
     )
 
+    # Placement tolerance must come from pad coverage, not a weaker gate.
+    private = read(driver_dir / "goodix53x5-private.h", failures)
+    require(
+        "#define GOODIX_ENROLL_SAMPLES 16" in private
+        and "#define GOODIX_SIGFM_BEST_MIN 150" in private
+        and "#define GOODIX_MIN_CAPTURE_KEYPOINTS 20" in private
+        and "#define GOODIX_ENROLL_MAX_CLIPPED_FRACTION 0.10" in private,
+        "enrollment coverage or one of the unchanged match gates is wrong",
+        failures,
+    )
+
     require(
         "goodix_device_measure_fdt_delta" in calibration
         and "if (delta > threshold)" in calibration,

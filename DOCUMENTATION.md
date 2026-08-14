@@ -835,6 +835,36 @@ current work item.
 Because every trial scored near zero, trial 3's correct rejection carries no
 information about discrimination. **No claim is made about false accepts.**
 
+#### Live fprintd session result (2026-08-14)
+
+Two fingers were enrolled and verified through the windowed session. **Both matched
+on the first attempt, with margins that are not marginal:**
+
+```text
+right index  Verify best SIGFM score: 3189   (threshold 150)
+right thumb  Verify best SIGFM score: 44974  (threshold 150)
+```
+
+The session also produced 19 rejected enrolment stages, and their distribution
+corrected a natural misreading. The operator saw repeated "finger was not centered"
+messages while enrolling the index finger and concluded that the smaller finger was
+covering too little of the pad. The measurements say otherwise:
+
+```text
+18 stages rejected at 95.1% - 95.3% non-contact
+ 1 stage  rejected at 25.6% non-contact
+```
+
+Only the 25.6% frame was a placement fault. A frame at 95% holds no contact at all:
+the finger had already left the pad when the image was read, which is the same
+figure this project has measured across sessions and across fingers. Every one of
+them nonetheless told the operator to centre their finger.
+
+Patch `0010` reports the two separately. Above `GOODIX_ENROLL_NO_CONTACT_FRACTION`
+(0.90) the retry becomes `FP_DEVICE_RETRY_TOO_SHORT`, which asks for a longer hold;
+below it the existing centre-the-finger retry is unchanged. The coverage gate itself
+is deliberately not moved: the frames it rejects are unusable either way.
+
 #### Operator note
 
 Prompt timing matters more than technique. The driver waits for contact to settle,

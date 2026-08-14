@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 14:40:00 +0200
+Subject: [PATCH] goodix550c: tell a lifted finger apart from a mis-placed one
+
+An enrolment session over fprintd produced nineteen rejected stages. Eighteen
+of them measured 95.1% to 95.3% non-contact and one measured 25.6%. Every one
+of them told the operator that the finger was not centred, so the session was
+read as the smaller finger covering too little of the pad, and the real
+distinction was invisible.
+
+A frame at 95% is not partial contact. It holds no contact at all: the finger
+had already left the pad when the image was read, which the same figure has
+shown across sessions and across fingers. Only the 25.6% frame was a placement
+fault.
+
+Report the two separately. Above GOODIX_ENROLL_NO_CONTACT_FRACTION the retry
+becomes FP_DEVICE_RETRY_TOO_SHORT, which asks for a longer hold; below it the
+existing centre-the-finger retry is unchanged. The coverage gate itself is not
+moved, because the templates it rejects are genuinely unusable either way.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-enroll.c
++++ b/drivers/goodix53x5/goodix53x5-enroll.c
+@@ -99,13 +99,23 @@
+          * to re-place the finger instead of storing such a stage. */
+         if (self->captured_clipped_fraction > GOODIX_ENROLL_MAX_CLIPPED_FRACTION)
+           {
++            /* A frame with essentially no contact is not a placement fault:
++             * the finger had already been lifted when the image was read.
++             * Asking for it to be centred sends the operator hunting a problem
++             * they do not have, so ask for a longer hold instead. */
++            gboolean no_contact = self->captured_clipped_fraction >
++                                  GOODIX_ENROLL_NO_CONTACT_FRACTION;
++
+             fp_dbg ("Enrollment stage rejected: %.1f%% of frame has no "
+-                    "finger contact (limit %.1f%%)",
++                    "finger contact (limit %.1f%%, %s)",
+                     self->captured_clipped_fraction * 100.0,
+-                    GOODIX_ENROLL_MAX_CLIPPED_FRACTION * 100.0);
++                    GOODIX_ENROLL_MAX_CLIPPED_FRACTION * 100.0,
++                    no_contact ? "finger already lifted" : "partial placement");
+             g_clear_pointer (&self->captured_image, g_free);
+             fpi_device_enroll_progress (dev, self->enroll_stage, NULL,
+-                                        fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
++                                        fpi_device_retry_new (no_contact ?
++                                                              FP_DEVICE_RETRY_TOO_SHORT :
++                                                              FP_DEVICE_RETRY_CENTER_FINGER));
+             fpi_ssm_next_state (ssm);
+             return;
+           }
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -94,6 +94,14 @@
+  * a retry so stored templates keep full ridge coverage. */
+ #define GOODIX_ENROLL_MAX_CLIPPED_FRACTION 0.10
+ 
++/* Above this, the frame holds no contact at all rather than partial contact:
++ * the finger had already left the pad when the image was read. Measured
++ * repeatedly at 95.1-95.3% across sessions and fingers, against genuine partial
++ * placements that land far lower. The two cases need different advice, because
++ * telling somebody to centre a finger that is no longer touching sends them
++ * chasing a placement problem they do not have. */
++#define GOODIX_ENROLL_NO_CONTACT_FRACTION 0.90
++
+ /* PSK white box for writing all-zero PSK */
+ #define GOODIX_PSK_WHITE_BOX_LEN 96
+ 
+

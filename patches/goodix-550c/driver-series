@@ -7,3 +7,4 @@
 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
 0008-goodix550c-report-reply-framing.patch
 0009-goodix550c-cover-pad-with-more-enroll-samples.patch
+0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch

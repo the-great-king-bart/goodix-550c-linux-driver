@@ -289,6 +289,15 @@ Swap `--enroll` for `--verify`, `--list` or `--delete`. Prompts come from fprint
 and appear directly in your terminal, so run it yourself rather than through an
 assistant relay — the finger-up wait is bounded and relayed cues arrive too late.
 
+`--gui` opens a dark-themed window instead, with the finger picker, a progress bar
+and Enrol/Verify/Stop/Delete buttons. That is the only mode whose prompts are
+visible when somebody other than the operator starts the session, because a
+terminal program can only prompt in a terminal its own operator is attached to.
+The window runs as the desktop user while the daemon runs as root for USB, so the
+session bus permits both uids and its socket is reachable by both; it is per-run,
+non-activating, and carries no secret, since the PSK reaches the driver by file and
+environment rather than over the bus.
+
 **This stores fingerprints**, unlike everything else in the project. Templates live
 in `build/goodix550c-fprintd-state/prints`, which is git-ignored; delete that
 directory to remove every template. The host `fprintd.service` is never started,

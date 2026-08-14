@@ -281,6 +281,7 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
     private = read(driver_dir / "goodix53x5-private.h", failures)
     require(
         "#define GOODIX_ENROLL_SAMPLES 16" in private
+        and "#define GOODIX_ENROLL_NO_CONTACT_FRACTION 0.90" in private
         and "#define GOODIX_SIGFM_BEST_MIN 150" in private
         and "#define GOODIX_MIN_CAPTURE_KEYPOINTS 20" in private
         and "#define GOODIX_ENROLL_MAX_CLIPPED_FRACTION 0.10" in private,

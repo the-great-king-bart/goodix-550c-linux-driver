@@ -865,6 +865,54 @@ Patch `0010` reports the two separately. Above `GOODIX_ENROLL_NO_CONTACT_FRACTIO
 below it the existing centre-the-finger retry is unchanged. The coverage gate itself
 is deliberately not moved: the frames it rejects are unusable either way.
 
+#### Blackout onset and what absorbs it (2026-08-14)
+
+The intermittent capture failure has a clear onset. An identification completed
+at 14:27:50.685, ending through the finger-up sub-SSM and its sleep:
+
+```text
+Manual FDT finger-up confirmed after 7 polls
+GOODIX_FINGER_UP_NUM_STATES entering state 3    (sleep)
+Device reported identify completion
+```
+
+The next action began about two seconds later and read empty reference frames
+from 14:27:53 until 14:28:04 — seventeen of them — then recovered on its own and
+stayed healthy for the rest of the session, through two full enrolments and a
+match scoring 6448582.
+
+So the sensor stops producing frames after an action that ends in sleep, and
+returns after roughly eleven seconds. **The cause is still unknown.** Three
+explanations have been measured and discarded, and are recorded here so they are
+not retried:
+
+- the sleep command alone: the open sequence ends with `GOODIX_OPEN_SLEEP`, the
+  same command, and the next action reads a clean frame;
+- reinitialisation afterwards: it re-runs the whole open sequence including the
+  USB reset, and the frames stay empty; and
+- read desynchronisation: reply framing across the boundary is byte-for-byte
+  that of a healthy read (`pack flag=0xb2 payload=14334 assembled=14338`).
+
+What is fixed is the damage. Patch `0011` refuses an empty reference frame
+rather than storing it, and patch `0012` sizes the retry to the measured
+blackout: the first attempt used eight retries a tenth of a second apart, about
+one second against an eleven-second fault, so seventeen empty frames were caught
+but five actions still failed. Sixty attempts a quarter of a second apart covers
+about fifteen seconds, which turns a blackout into a wait rather than a refusal.
+That is the right trade for an authenticator, because the alternative is turning
+away an operator who did nothing wrong.
+
+#### Session isolation
+
+The windowed session spans two accounts by necessity: the daemon needs root for
+USB, and the window belongs to the desktop user. Its D-Bus socket is therefore
+owned by the desktop user with the group set to root and mode `0660`, inside a
+directory at `0710` with the same ownership, so exactly those two reach it and no
+other account does. The daemon is admitted through the group rather than by
+granting the sandbox `CAP_DAC_OVERRIDE`, which bubblewrap drops. The socket lives
+for one session only and carries no secret: the PSK reaches the driver by file and
+environment, never over the bus.
+
 #### Operator note
 
 Prompt timing matters more than technique. The driver waits for contact to settle,

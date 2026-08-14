@@ -296,6 +296,9 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         and "if (!goodix_reference_frame_has_signal (img12))" in scan_raw
         and "#define GOODIX_REFERENCE_MIN_MEAN 200" in read(
             driver_dir / "goodix53x5-private.h", failures
+        )
+        and "#define GOODIX_REFERENCE_MAX_RETRIES 60" in read(
+            driver_dir / "goodix53x5-private.h", failures
         ),
         "an empty reference frame can still be stored and subtracted",
         failures,

@@ -303,6 +303,25 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         failures,
     )
     require(
+        "Reply framing: pack flag=" in transport_raw
+        and re.search(
+            r"if \(self->variant == GOODIX_VARIANT_TLS_PSK &&\s*\n"
+            r"\s*goodix_550c_manual_fdt_poll_allowed \(\)\)\s*\n"
+            r"\s*\{\s*\n\s*guint8 pack_flag",
+            transport_raw,
+        )
+        is not None,
+        "reply-framing diagnostic is missing or not gated by the experimental policy",
+        failures,
+    )
+    require(
+        "pack_payload," not in transport_raw.split("Reply framing")[1][:400]
+        or "fp_dbg (\"Reply framing: pack flag=0x%02x payload=%zu assembled=%zu\"" in transport_raw,
+        "reply-framing diagnostic reports more than framing metadata",
+        failures,
+    )
+
+    require(
         "ACK diagnostic:" in transport_raw
         and "goodix_550c_manual_fdt_poll_allowed ()" in transport_raw,
         "ACK flags are not neutrally diagnosed under the experimental gate",

@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 12:30:00 +0200
+Subject: [PATCH] goodix550c: report reply framing for the post-action failure
+
+The first verification of a session succeeds and every later one reads a dead
+sensor: an all-zero reference frame and an ADC-railed capture. Those failing
+captures report an identical pixel histogram (mean 4012.1, 95.2% clipped)
+across four attempts, two runs and two fingers, but four different checksums.
+The same values in a different arrangement point at reads shifted by a whole
+transaction rather than at a sensor that stopped working, and a reinitialize
+after deactivation was measured and did not help.
+
+Report the pack flag and byte counts of every assembled reply so a queued
+reply nobody consumed becomes visible directly: it appears as a pack whose
+flag or length does not match what the current command asked for.
+
+Only framing metadata is reported. No payload is logged, and an image reply
+is still encrypted at this point. The diagnostic runs under the existing
+experimental gate, which is default-off at both compile time and run time.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-transport.c
++++ b/drivers/goodix53x5/goodix53x5-transport.c
+@@ -440,6 +440,31 @@
+ 
+   if (goodix_proto_rx_complete (&self->rx))
+     {
++      /* Reply-framing diagnostic for the post-action capture failure, where
++       * the second verification of a session reads an all-zero reference frame
++       * and an ADC-railed image whose pixel histogram repeats exactly while its
++       * arrangement does not. That shape suggests reads shifted by a whole
++       * transaction rather than a sensor fault, which this makes visible: a
++       * queued reply nobody consumed shows up here as a pack whose flag or
++       * length does not match what the current command asked for.
++       *
++       * Only the pack flag and byte counts are reported. The payload is not
++       * logged, and for an image reply it is still encrypted at this point. */
++      if (self->variant == GOODIX_VARIANT_TLS_PSK &&
++          goodix_550c_manual_fdt_poll_allowed ())
++        {
++          guint8 pack_flag = 0;
++          const guint8 *pack_payload = NULL;
++          gsize pack_payload_len = 0;
++
++          if (goodix_proto_rx_pack (&self->rx, &pack_flag, &pack_payload,
++                                    &pack_payload_len))
++            fp_dbg ("Reply framing: pack flag=0x%02x payload=%zu assembled=%zu",
++                    pack_flag, pack_payload_len, self->rx.len);
++          else
++            fp_dbg ("Reply framing: unpacked assembled=%zu", self->rx.len);
++        }
++
+       /* Message complete — advance SSM */
+       fpi_ssm_next_state (transfer->ssm);
+     }
+

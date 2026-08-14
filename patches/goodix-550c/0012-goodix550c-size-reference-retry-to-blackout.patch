@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 15:55:00 +0200
+Subject: [PATCH] goodix550c: size the reference retry to the measured blackout
+
+The blackout has a clear onset. An identification completed at 14:27:50.685,
+ending through the finger-up sub-SSM and its sleep:
+
+  Manual FDT finger-up confirmed after 7 polls
+  GOODIX_FINGER_UP_NUM_STATES entering state 3    (sleep)
+  Device reported identify completion
+
+The next action started about two seconds later and read empty reference
+frames from 14:27:53 until 14:28:04, then recovered on its own and stayed
+healthy for the rest of the session, including two full enrolments and a match
+scoring 6448582.
+
+So the sensor stops producing frames after an action that ends in sleep, and
+comes back after roughly eleven seconds. The retry added with the reference
+check was sized at eight attempts a tenth of a second apart, about one second,
+which is an order of magnitude short of that: seventeen empty frames were
+caught but five actions still failed with the budget spent.
+
+Cover the measured recovery instead. Sixty attempts a quarter of a second
+apart is about fifteen seconds, so a blackout becomes a wait rather than a
+refusal. Waiting is the right trade for an authenticator, because the
+alternative is turning away an operator who did nothing wrong.
+
+This absorbs the fault rather than curing it. Why the sensor stops answering
+after a sleep is still unknown, and three explanations for it have now been
+measured and discarded: the sleep command alone (the open sequence ends with
+the same command and the next action is fine), reinitialisation afterwards
+(it re-runs the whole open including the USB reset and the frames stay empty),
+and read desynchronisation (the reply framing across the boundary is
+byte-for-byte that of a healthy read).
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -105,11 +105,18 @@
+ /* The no-finger reference frame is subtracted from every capture, so one that
+  * carries no signal silently changes the preprocessing rather than failing.
+  * Healthy frames average about 2350 here; frames read while the sensor had
+- * stopped responding average 0 to 10. The condition clears by itself, so a
+- * bounded retry recovers without failing the operator's action. */
++ * stopped responding average 0 to 10.
++ *
++ * The condition follows an action that ended in sleep and clears by itself.
++ * One measured blackout ran from 14:27:53 to 14:28:04, so the budget covers
++ * about fifteen seconds: the first attempt at this used eight retries a tenth
++ * of a second apart, roughly one second, and five actions failed inside a
++ * blackout eleven times longer than the budget meant to absorb it. Waiting is
++ * the right trade here, because the alternative is refusing an operator who
++ * did nothing wrong. */
+ #define GOODIX_REFERENCE_MIN_MEAN 200
+-#define GOODIX_REFERENCE_MAX_RETRIES 8
+-#define GOODIX_REFERENCE_RETRY_DELAY_MS 120
++#define GOODIX_REFERENCE_MAX_RETRIES 60
++#define GOODIX_REFERENCE_RETRY_DELAY_MS 250
+ 
+ /* PSK white box for writing all-zero PSK */
+ #define GOODIX_PSK_WHITE_BOX_LEN 96
+

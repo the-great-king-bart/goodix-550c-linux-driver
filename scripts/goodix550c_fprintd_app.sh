@@ -191,7 +191,11 @@ install -m 0600 "$PSK_FILE" "$RUN_DIR/goodix550c.psk"
 # The window runs as the desktop user, and handing over a root-owned socket
 # after the fact was not enough for it to complete the D-Bus handshake. Own the
 # bus from the start instead; the root daemon can still connect to it.
-install -d -o "$DESKTOP_USER" -m 0700 "$RUN_DIR/bus.d"
+# Reachable by exactly the two parties of this session and nobody else: the
+# desktop user owns it, and the daemon gets in through the group bits as root.
+# That avoids both a world-accessible socket and granting the sandbox
+# CAP_DAC_OVERRIDE.
+install -d -o "$DESKTOP_USER" -g root -m 0710 "$RUN_DIR/bus.d"
 chmod 0711 "$RUN_DIR"
 
 cleanup() {
@@ -256,8 +260,8 @@ done
 # Both sides of this session must reach the socket: the daemon runs as root
 # under bubblewrap, which drops the capability that would let it ignore the
 # owning user's mode bits, and the window runs as the desktop user.
-chmod 0711 "$RUN_DIR/bus.d"
-chmod 0666 "$BUS_SOCKET"
+chown "$DESKTOP_USER":root "$BUS_SOCKET"
+chmod 0660 "$BUS_SOCKET"
 
 # fprintd asks PolicyKit before every device method, and this private bus has no
 # polkit on it. The stub answers only net.reactivated.fprint.* actions and binds

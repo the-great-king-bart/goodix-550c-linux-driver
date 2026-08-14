@@ -297,9 +297,11 @@ spare slots to improve coverage, because a named verify would never look at them
 visible when somebody other than the operator starts the session, because a
 terminal program can only prompt in a terminal its own operator is attached to.
 The window runs as the desktop user while the daemon runs as root for USB, so the
-session bus permits both uids and its socket is reachable by both; it is per-run,
-non-activating, and carries no secret, since the PSK reaches the driver by file and
-environment rather than over the bus.
+session bus permits both uids. Its socket is owned by the desktop user with the
+group set to root and mode 0660, inside a 0710 directory, so exactly those two
+accounts reach it and no other does. It is per-run, non-activating, and carries no
+secret, since the PSK reaches the driver by file and environment rather than over
+the bus.
 
 **This stores fingerprints**, unlike everything else in the project. Templates live
 in `build/goodix550c-fprintd-state/prints`, which is git-ignored; delete that

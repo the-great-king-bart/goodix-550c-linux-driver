@@ -9,3 +9,4 @@
 0009-goodix550c-cover-pad-with-more-enroll-samples.patch
 0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch
 0011-goodix550c-refuse-empty-reference-frame.patch
+0012-goodix550c-size-reference-retry-to-blackout.patch

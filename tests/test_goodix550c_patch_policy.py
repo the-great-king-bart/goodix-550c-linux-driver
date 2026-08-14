@@ -21,6 +21,7 @@ REPLY_FRAMING_PATCH = PATCH_DIR / "0008-goodix550c-report-reply-framing.patch"
 ENROLL_COVERAGE_PATCH = PATCH_DIR / "0009-goodix550c-cover-pad-with-more-enroll-samples.patch"
 RETRY_REASON_PATCH = PATCH_DIR / "0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch"
 REFERENCE_SIGNAL_PATCH = PATCH_DIR / "0011-goodix550c-refuse-empty-reference-frame.patch"
+RETRY_BUDGET_PATCH = PATCH_DIR / "0012-goodix550c-size-reference-retry-to-blackout.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -316,6 +317,18 @@ def test_an_empty_reference_frame_is_never_stored():
     assert "self->reference_retries = 0;" in added
 
 
+def test_reference_retry_budget_covers_the_measured_blackout():
+    added = added_lines(RETRY_BUDGET_PATCH)
+
+    assert "#define GOODIX_REFERENCE_MAX_RETRIES 60" in added
+    assert "#define GOODIX_REFERENCE_RETRY_DELAY_MS 250" in added
+
+    # 60 x 250ms is 15s, against a blackout measured at about 11s. A budget
+    # shorter than the fault it absorbs fails actions for no reason.
+    retries, delay = 60, 250
+    assert retries * delay >= 11_000
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -344,6 +357,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         ENROLL_COVERAGE_PATCH.name,
         RETRY_REASON_PATCH.name,
         REFERENCE_SIGNAL_PATCH.name,
+        RETRY_BUDGET_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

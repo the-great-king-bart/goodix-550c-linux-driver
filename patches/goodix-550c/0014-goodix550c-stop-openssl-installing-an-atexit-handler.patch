@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Sat, 15 Aug 2026 01:10:00 +0200
+Subject: [PATCH] goodix550c: stop OpenSSL installing an atexit handler
+
+Installed for the host fprintd, the daemon dumped core on shutdown after any
+session that had opened the sensor:
+
+    #4  OPENSSL_cleanup      (libcrypto.so.3)
+    #5  __run_exit_handlers  (libc.so.6)
+    #6  __GI_exit            (libc.so.6)
+
+with three GLib worker threads still live in the same dump. This driver is the
+only thing in fprintd that touches OpenSSL, and SSL_CTX_new initializes it
+implicitly, which registers OPENSSL_cleanup with atexit(). The handler then
+runs during the host's exit, tearing OpenSSL state down underneath threads that
+have not stopped yet.
+
+The crash lands after the action completes, so authentication itself was never
+affected and D-Bus activation restarted the daemon on the next request. It
+still filed a crash report each time and left systemd recording the unit as
+failed, which is not something an authentication daemon should be doing.
+
+A driver loaded into somebody else's process should not install a process-wide
+exit handler at all. Initialize OpenSSL explicitly with OPENSSL_INIT_NO_ATEXIT
+before the first implicit initialization can happen. Nothing else changes: the
+flag only declines the handler, and the session teardown this driver already
+does at device close is unaffected.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-tls.c
++++ b/drivers/goodix53x5/goodix53x5-tls.c
+@@ -42,9 +42,36 @@
+ /* ex_data index used to retrieve the GoodixTls* inside the PSK callback. */
+ static int goodix_tls_ex_index = -1;
+ 
++/*
++ * OpenSSL registers OPENSSL_cleanup with atexit() the first time anything
++ * initializes it implicitly, and that handler then runs from the host
++ * process's exit path, long after this driver is done with it. fprintd still
++ * has live GLib worker threads at that point, and tearing OpenSSL down under
++ * them segfaults the daemon inside OPENSSL_cleanup on every shutdown that
++ * opened the sensor.
++ *
++ * A driver loaded into somebody else's process has no business installing a
++ * process-wide exit handler, so initialize explicitly and decline it. This has
++ * to happen before any other OpenSSL call, because implicit initialization
++ * runs once and the flags of whoever arrives first are the ones that stick.
++ */
++static void
++goodix_tls_ensure_openssl (void)
++{
++  static gboolean openssl_initialized = FALSE;
++
++  if (openssl_initialized)
++    return;
++
++  openssl_initialized = TRUE;
++  OPENSSL_init_ssl (OPENSSL_INIT_NO_ATEXIT, NULL);
++}
++
+ static void
+ goodix_tls_ensure_ex_index (void)
+ {
++  goodix_tls_ensure_openssl ();
++
+   if (goodix_tls_ex_index == -1)
+     goodix_tls_ex_index =
+       SSL_get_ex_new_index (0, (void *) "GoodixTls", NULL, NULL, NULL);
+

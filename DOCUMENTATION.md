@@ -1002,13 +1002,43 @@ That property is what makes the factor safe to enable, so `--enable-login` verif
 it in the shipped PAM config rather than assuming it, and refuses if a future
 package revision drops it.
 
-### What is still unmeasured
+### First rejection measurement
 
-The false-accept rate. Every score recorded so far comes from the enrolled finger,
-so the project can state that the sensor recognises the enrolled operator and
-cannot yet state that it rejects anybody else. `scripts/goodix550c_score_report.py`
-produces the genuine-versus-impostor distribution once labelled impostor
-presentations exist. Until they do, `--enable-login` should not be run.
+Ten presentations of fingers that are not enrolled were recorded against the
+three-template set. All three stored slots are right-hand (thumb, index, ring), so
+every left-hand presentation is a known non-match and needs no labelling to be
+attributed.
+
+Nine of the ten captured cleanly at 0.0% non-contact, with frame means of
+1643-1943, indistinguishable from a genuine capture. The tenth clipped at 48.5%
+and is discarded as a partial placement rather than counted as evidence.
+
+```text
+genuine:  3 attempts   min 2247   median 3542   max 72582   0 below threshold
+impostor: 9 attempts   min 0      median 3      max 10      0 at or above threshold
+
+Separation between weakest genuine and strongest impostor: 2237
+```
+
+The threshold of 150 sits between two distributions that do not approach each
+other. The strongest non-match reached 10, which is the noise floor of the score;
+the weakest accepted genuine reached 2247. The threshold has roughly fifteenfold
+margin on both sides.
+
+What this does *not* establish is a false-accept *rate*. Nine attempts with zero
+false accepts bounds the rate at about 30% by the rule of three, which is no
+useful bound at all; a claim of, say, under 1% would need several hundred
+presentations. The evidence here is the shape of the separation rather than the
+count, and it is strong on that axis and weak on this one.
+
+The presentations were also the same person's other fingers rather than another
+person's. That is a harder case than a stranger in the ways that matter to this
+sensor — same skin, same moisture, same placement habits, same session
+conditions — but it is not a substitute for cross-subject data.
+
+Four earlier attempts (`4`, `1`, `7`, `0`) are recorded but unattributed. If any of
+those were the enrolled finger, they were false rejects, and the false-reject rate
+matters as much as the false-accept rate for daily use.
 
 ## Verification
 

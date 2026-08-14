@@ -18,6 +18,7 @@ TOD_MESON = ROOT / "tod" / "meson.build"
 TOD_OPTIONS = ROOT / "tod" / "meson_options.txt"
 TOD_HARNESS = ROOT / "tools" / "goodix550c_tod_open_close.c"
 TOD_ENROLL_HARNESS = ROOT / "tools" / "goodix550c_tod_enroll.c"
+TOD_VERIFY_HARNESS = ROOT / "tools" / "goodix550c_tod_verify.c"
 TOD_RUNNER = ROOT / "scripts" / "run_goodix550c_tod_open_close.sh"
 TOD_SMOKE = ROOT / "scripts" / "smoke_goodix550c_tod_fprintd.sh"
 
@@ -514,6 +515,61 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
         failures,
     )
 
+    verify_harness = read_text(TOD_VERIFY_HARNESS, failures)
+    for marker in (
+        '#define EXPECTED_DRIVER "goodix53x5"',
+        '#define EXPECTED_NAME "Goodix HTK32 Fingerprint Sensor"',
+        # Verification reaches the same finger-wait states as enrollment.
+        'g_strcmp0 (manual_fdt_gate, "1") == 0',
+        'g_getenv ("GOODIX550C_PSK") == NULL',
+        'g_getenv ("LD_LIBRARY_PATH") == NULL',
+        'g_getenv ("LD_PRELOAD") == NULL',
+        "devices->len != 1",
+        "fp_device_get_scan_type (device) != FP_SCAN_TYPE_PRESS",
+        "fp_device_has_feature (device, FP_DEVICE_FEATURE_VERIFY)",
+        "fp_device_open_sync (device, NULL, &error)",
+        "fp_device_enroll_sync (device",
+        "fp_device_verify_sync (device, enrolled, NULL, NULL, NULL,",
+        "fp_device_close_sync (device, NULL, &error)",
+        "_exit (verified_ok ? 0 : 1)",
+    ):
+        require(
+            marker in verify_harness,
+            f"TOD verification harness invariant missing: {marker}",
+            failures,
+        )
+    for forbidden in (
+        "fp_print_serialize",
+        "fp_print_to_file",
+        "g_file_set_contents",
+        "fopen",
+    ):
+        require(
+            forbidden not in verify_harness,
+            f"TOD verification harness must not persist template data: {forbidden}",
+            failures,
+        )
+    # A positive-only test would pass against a driver that matched everything,
+    # so at least one trial must expect a rejection.
+    require(
+        "#define VERIFY_DIFFERENT_FINGER_TRIALS 1" in verify_harness
+        and "expect no match" in verify_harness,
+        "TOD verification harness does not test a non-matching finger",
+        failures,
+    )
+    require(
+        "observed_matches == expected_matches" in verify_harness,
+        "TOD verification harness does not compare observed verdicts against expected ones",
+        failures,
+    )
+    # A retry is the device asking for another placement, not a verdict.
+    require(
+        "#define VERIFY_MAX_RETRIES" in verify_harness
+        and "error->domain == FP_DEVICE_RETRY" in verify_harness,
+        "TOD verification harness counts a retry request as a lost trial",
+        failures,
+    )
+
     runner = read_text(TOD_RUNNER, failures)
     for marker in (
         "--allow-volatile-init",
@@ -875,6 +931,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--module", type=Path)
     parser.add_argument("--harness", type=Path)
     parser.add_argument("--enroll-harness", type=Path)
+    parser.add_argument("--verify-harness", type=Path)
     parser.add_argument("--core-library", type=Path)
     parser.add_argument("--tod-library", type=Path)
     parser.add_argument("--build-dir", type=Path)
@@ -921,6 +978,14 @@ def main(argv: list[str] | None = None) -> int:
             failures.extend(
                 audit_harness(
                     args.enroll_harness.resolve(),
+                    args.core_library.resolve(),
+                    args.tod_library.resolve(),
+                )
+            )
+        if args.verify_harness is not None:
+            failures.extend(
+                audit_harness(
+                    args.verify_harness.resolve(),
                     args.core_library.resolve(),
                     args.tod_library.resolve(),
                 )

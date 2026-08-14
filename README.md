@@ -246,6 +246,31 @@ around it by loosening `GOODIX_ENROLL_MAX_CLIPPED_FRACTION`, which would enroll
 unusable templates and raise false-accept risk. See DOCUMENTATION.md for the
 measurements.
 
+## Guarded verification test
+
+Same wrapper, `--verify` instead of `--enroll`. It enrolls, keeps the template
+**in process memory only**, then matches live fingers against it. Neither the
+template nor any scanned print is stored, printed, or hashed.
+
+```bash
+sudo scripts/run_goodix550c_tod_open_close.sh \
+  --stage-dir build/goodix550c-tod-wake \
+  --psk-file research/secrets/goodix550c.psk \
+  --expected-psk-hash research/artifacts/psk-hash-current.json \
+  --allow-volatile-init \
+  --allow-manual-fdt-poll \
+  --verify --debug
+```
+
+Eight enrollment placements, then three match trials: two with the enrolled finger
+and one with a **different** finger, because a positive-only test would pass against
+a driver that matched everything. Bounded at 420 seconds.
+
+Current state: the **first** verification of a session matches correctly. Every later
+one in the same session fails because the device stops answering image requests — an
+all-zero reference frame and a 95.2% railed capture. The rejection trial has not yet
+returned a verdict, so nothing is claimed about false accepts. See DOCUMENTATION.md.
+
 ## Offline packet preview
 
 This produces the exact bytes without opening the USB device:

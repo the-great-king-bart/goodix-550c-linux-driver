@@ -22,7 +22,7 @@ usage() {
     printf '%s\n' \
         "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE \\" \
         '  --expected-psk-hash LIVE_HASH_FILE --allow-volatile-init \\' \
-        '  [--allow-manual-fdt-poll] [--enroll] [--debug]' \
+        '  [--allow-manual-fdt-poll] [--enroll|--verify] [--debug]' \
         '' \
         'All paths must resolve below this project. The stage must have been' \
         'built with both experimental options. This wrapper stops no service or' \
@@ -33,6 +33,10 @@ usage() {
         'enrollment harness instead and requires that acknowledgement, because on' \
         'firmware 13021 the finger-wait states depend on manual polling. Enrollment' \
         'discards its template; it stores no fingerprint.' \
+        '' \
+        '--verify enrolls, keeps the template in process memory only, then matches' \
+        'live fingers against it and reports each verdict. It requires the same' \
+        'acknowledgement and stores neither the template nor any scanned print.' \
         '' \
         '--debug adds driver diagnostic logging to stderr. It changes no device' \
         'behaviour and logs no key, raw reading, image, or template.'
@@ -63,6 +67,9 @@ while (($#)); do
             ;;
         --enroll)
             ACTION=enroll
+            ;;
+        --verify)
+            ACTION=verify
             ;;
         --debug)
             DEBUG_LOG=1
@@ -132,6 +139,16 @@ if [[ "$ACTION" == enroll ]]; then
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-enroll"
     HARNESS_METADATA_KEY=enroll_harness_sha256
     HARNESS_TIMEOUT=240s
+elif [[ "$ACTION" == verify ]]; then
+    if ((MANUAL_FDT_ACK != 1)); then
+        printf 'Refusing: --verify requires --allow-manual-fdt-poll.\n' >&2
+        exit 2
+    fi
+    # Verification enrolls first, then runs its match trials, so it needs the
+    # enrollment budget plus room for those trials.
+    HARNESS="$STAGE_DIR/builddir/goodix550c-tod-verify"
+    HARNESS_METADATA_KEY=verify_harness_sha256
+    HARNESS_TIMEOUT=420s
 else
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-open-close"
     HARNESS_METADATA_KEY=harness_sha256

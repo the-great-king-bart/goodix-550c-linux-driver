@@ -222,6 +222,7 @@ meson compile -C "$BUILD_DIR"
 MODULE="$BUILD_DIR/libgoodix550c.so"
 HARNESS="$BUILD_DIR/goodix550c-tod-open-close"
 ENROLL_HARNESS="$BUILD_DIR/goodix550c-tod-enroll"
+VERIFY_HARNESS="$BUILD_DIR/goodix550c-tod-verify"
 
 # Link the physical harness to the installed Ubuntu core and TOD SONAMEs.  It
 # has no RPATH/RUNPATH, so the guarded runner cannot redirect it to a build-tree
@@ -258,12 +259,30 @@ cc -std=c11 -O2 -g -Wall -Wextra -Werror \
     $(pkg-config --libs glib-2.0 gio-2.0 gobject-2.0) \
     -o "$ENROLL_HARNESS"
 
+# The verification harness is built identically. It enrolls a template, keeps it
+# in process memory only, and matches live fingers against it; neither the
+# template nor any scanned print is stored.
+cc -std=c11 -O2 -g -Wall -Wextra -Werror \
+    -fPIE -pie -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+    "-ffile-prefix-map=$PROJECT_ROOT=/usr/src/goodix550c-project" \
+    "-fdebug-prefix-map=$PROJECT_ROOT=/usr/src/goodix550c-project" \
+    "-ffile-prefix-map=$SDK_ROOT=/usr/src/ubuntu-libfprint-tod-sdk" \
+    "-fdebug-prefix-map=$SDK_ROOT=/usr/src/ubuntu-libfprint-tod-sdk" \
+    -isystem "$SDK_ROOT/usr/include/libfprint-2" \
+    $(pkg-config --cflags glib-2.0 gio-2.0 gobject-2.0) \
+    "$PROJECT_ROOT/tools/goodix550c_tod_verify.c" \
+    -Wl,-z,relro,-z,now,-z,noexecstack \
+    -Wl,--no-as-needed "$CORE_LIBRARY" "$TOD_LIBRARY" -Wl,--as-needed \
+    $(pkg-config --libs glib-2.0 gio-2.0 gobject-2.0) \
+    -o "$VERIFY_HARNESS"
+
 python3 "$PROJECT_ROOT/scripts/verify_goodix550c_tod_module.py" \
     --source-root "$MODULE_SOURCE" \
     --sdk-root "$SDK_ROOT" \
     --module "$MODULE" \
     --harness "$HARNESS" \
     --enroll-harness "$ENROLL_HARNESS" \
+    --verify-harness "$VERIFY_HARNESS" \
     --core-library "$CORE_LIBRARY" \
     --tod-library "$TOD_LIBRARY" \
     --build-dir "$BUILD_DIR" \
@@ -298,6 +317,7 @@ cc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
 module_sha="$(sha256sum "$MODULE" | awk '{print $1}')"
 harness_sha="$(sha256sum "$HARNESS" | awk '{print $1}')"
 enroll_harness_sha="$(sha256sum "$ENROLL_HARNESS" | awk '{print $1}')"
+verify_harness_sha="$(sha256sum "$VERIFY_HARNESS" | awk '{print $1}')"
 source_checksums="$STAGE_DIR/source-checksums.sha256"
 (
     cd "$PROJECT_ROOT"
@@ -309,6 +329,7 @@ source_checksums="$STAGE_DIR/source-checksums.sha256"
         tests/native/test_goodix550c_manual_fdt.c \
         tools/goodix550c_tod_open_close.c \
         tools/goodix550c_tod_enroll.c \
+        tools/goodix550c_tod_verify.c \
         tod/goodix550c-sources.txt \
         tod/goodix550c-tod-entry.c \
         tod/goodix550c-tod.map \
@@ -333,6 +354,7 @@ metadata="$STAGE_DIR/build-metadata.txt"
     printf 'module_sha256=%s\n' "$module_sha"
     printf 'harness_sha256=%s\n' "$harness_sha"
     printf 'enroll_harness_sha256=%s\n' "$enroll_harness_sha"
+    printf 'verify_harness_sha256=%s\n' "$verify_harness_sha"
     printf 'source_checksums_sha256=%s\n' "$source_checksums_sha"
 } > "$metadata"
 
@@ -342,5 +364,7 @@ printf 'Built installed-runtime harness: %s\n' "$HARNESS"
 printf 'Harness SHA-256: %s\n' "$harness_sha"
 printf 'Built enrollment harness: %s\n' "$ENROLL_HARNESS"
 printf 'Enrollment harness SHA-256: %s\n' "$enroll_harness_sha"
+printf 'Built verification harness: %s\n' "$VERIFY_HARNESS"
+printf 'Verification harness SHA-256: %s\n' "$verify_harness_sha"
 printf 'Project-relative source checksums: %s\n' "$source_checksums"
 printf 'Build metadata: %s\n' "$metadata"

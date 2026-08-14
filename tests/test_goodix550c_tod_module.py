@@ -14,6 +14,7 @@ FETCH_UPSTREAM_SCRIPT = ROOT / "scripts" / "fetch_upstream_sources.sh"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_tod_module.sh"
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_goodix550c_tod_module.py"
 SMOKE_SCRIPT = ROOT / "scripts" / "smoke_goodix550c_tod_fprintd.sh"
+INSTALL_SCRIPT = ROOT / "scripts" / "goodix550c_install_system.sh"
 LIVE_RUNNER = ROOT / "scripts" / "run_goodix550c_tod_open_close.sh"
 TOD_ENTRY = ROOT / "tod" / "goodix550c-tod-entry.c"
 TOD_SYMBOL_MAP = ROOT / "tod" / "goodix550c-tod.map"
@@ -299,6 +300,48 @@ def test_private_bus_smoke_is_non_activating_and_hides_usb():
     assert "GOODIX550C_PSK" not in script
     assert "<servicedir>" not in bus_config
     assert "<standard_session_servicedirs/>" not in bus_config
+
+
+def test_system_installer_stages_the_login_factor_and_stays_reversible():
+    script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    # Installing the driver and making it an authentication factor are separate
+    # actions, so the driver can be proven against the host service first.
+    assert "--install-driver" in script
+    assert "--enable-login" in script
+    assert "--disable-login" in script
+    assert "--uninstall" in script
+
+    # Every stage validates the same live profile the private harness does; a
+    # module built for another firmware or libfprint must not reach the host.
+    assert "a3de5a1b6174ace5db0bb2a8796c5be6e55428f0" in script
+    assert "GF5288_GM168SEC_APP_13021" in script
+    assert "1:1.95.1+tod1-0ubuntu2" in script
+    assert "sha256sum --check --strict --quiet" in script
+    assert "module digest does not match its build metadata" in script
+
+    # Both runtime gates stay opt-in, exactly as they are for the private run.
+    assert "--allow-volatile-init" in script
+    assert "--allow-manual-fdt-poll" in script
+    assert "GOODIX550C_ALLOW_VOLATILE_INIT=1" in script
+    assert "GOODIX550C_ALLOW_MANUAL_FDT_POLL=1" in script
+    assert "FP_DRIVERS_ALLOWLIST=goodix53x5" in script
+
+    # The secret is root-only on disk and never enters the unit file itself.
+    assert "install -m 0600 -o root -g root" in script
+    assert "install -d -m 0700 -o root -g root" in script
+    assert "Environment=GOODIX550C_PSK_FILE=$INSTALLED_PSK" in script
+
+    # Password fallback is the property that keeps a sensor fault from locking
+    # the account out, so it is checked rather than assumed.
+    assert "default=ignore" in script
+    assert "could make a sensor fault block login entirely" in script
+    assert "--yes-enable-login" in script
+
+    # Enrolled templates are never destroyed as a side effect of any stage.
+    assert "--replace-prints" in script
+    assert "--purge-prints" in script
+    assert "Left templates in" in script
 
 
 def test_full_default_off_tod_build_offline_when_inputs_are_present():

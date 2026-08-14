@@ -106,6 +106,14 @@ class FingerprintWindow(Gtk.Window):
         controls.pack_start(self.finger, True, True, 0)
         outer.pack_start(controls, False, False, 0)
 
+        # Verifying a named finger loads only that slot. Matching against every
+        # enrolled slot is what a login gate does, and it is also what makes
+        # extra passes of the same finger, stored under spare slots, count for
+        # anything at all.
+        self.match_any = Gtk.CheckButton(label="Verify against any enrolled finger")
+        self.match_any.set_active(True)
+        outer.pack_start(self.match_any, False, False, 0)
+
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.enroll_button = Gtk.Button(label="Enrol")
         self.enroll_button.connect("clicked", self.on_enroll)
@@ -156,6 +164,7 @@ class FingerprintWindow(Gtk.Window):
         self.verify_button.set_sensitive(not busy)
         self.delete_button.set_sensitive(not busy)
         self.finger.set_sensitive(not busy)
+        self.match_any.set_sensitive(not busy)
         self.cancel_button.set_sensitive(busy)
 
     def connect_device(self) -> bool:
@@ -182,6 +191,7 @@ class FingerprintWindow(Gtk.Window):
 
             obj.connect_to_signal("EnrollStatus", self.on_enroll_status)
             obj.connect_to_signal("VerifyStatus", self.on_verify_status)
+            obj.connect_to_signal("VerifyFingerSelected", self.on_finger_selected)
 
             self.device.Claim(self.username)
             self.claimed = True
@@ -227,10 +237,11 @@ class FingerprintWindow(Gtk.Window):
         self.set_busy(True)
         self.progress.set_fraction(0.0)
         self.progress.set_text("")
+        target = "any" if self.match_any.get_active() else self.finger.get_active_text()
         self.set_status("Place your finger on the reader")
-        self.log(f"Verifying {self.finger.get_active_text()}.")
+        self.log(f"Verifying against {target}.")
         try:
-            self.device.VerifyStart(self.finger.get_active_text())
+            self.device.VerifyStart(target)
         except dbus.DBusException as error:
             self.set_busy(False)
             self.set_status("Could not start", "bad")
@@ -287,6 +298,9 @@ class FingerprintWindow(Gtk.Window):
             self.set_status("Enrolment failed", "bad")
             self.log(f"Enrolment ended: {result}")
         self.refresh_enrolled()
+
+    def on_finger_selected(self, finger: str) -> None:
+        self.log(f"Device selected slot: {finger}")
 
     def on_verify_status(self, result: str, done: bool) -> None:
         result = str(result)

@@ -6,3 +6,4 @@
 0006-goodix550c-log-capture-path-diagnostics.patch
 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
 0008-goodix550c-report-reply-framing.patch
+0009-goodix550c-cover-pad-with-more-enroll-samples.patch

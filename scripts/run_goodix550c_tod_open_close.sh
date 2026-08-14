@@ -141,7 +141,7 @@ if [[ "$ACTION" == enroll ]]; then
     fi
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-enroll"
     HARNESS_METADATA_KEY=enroll_harness_sha256
-    HARNESS_TIMEOUT=240s
+    HARNESS_TIMEOUT=480s
 elif [[ "$ACTION" == desync-probe ]]; then
     if ((MANUAL_FDT_ACK != 1)); then
         printf 'Refusing: --desync-probe requires --allow-manual-fdt-poll.\n' >&2
@@ -160,7 +160,7 @@ elif [[ "$ACTION" == verify ]]; then
     # enrollment budget plus room for those trials.
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-verify"
     HARNESS_METADATA_KEY=verify_harness_sha256
-    HARNESS_TIMEOUT=420s
+    HARNESS_TIMEOUT=900s
 else
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-open-close"
     HARNESS_METADATA_KEY=harness_sha256

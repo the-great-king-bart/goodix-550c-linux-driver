@@ -18,6 +18,7 @@ MANUAL_FDT_PATCH = PATCH_DIR / "0005-goodix550c-add-guarded-manual-fdt-poll.patc
 CAPTURE_DIAG_PATCH = PATCH_DIR / "0006-goodix550c-log-capture-path-diagnostics.patch"
 FDT_SETTLE_PATCH = PATCH_DIR / "0007-goodix550c-settle-manual-fdt-contact-before-capture.patch"
 REPLY_FRAMING_PATCH = PATCH_DIR / "0008-goodix550c-report-reply-framing.patch"
+ENROLL_COVERAGE_PATCH = PATCH_DIR / "0009-goodix550c-cover-pad-with-more-enroll-samples.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -265,6 +266,23 @@ def test_reply_framing_diagnostic_is_gated_and_reports_only_metadata():
     assert "%s\", pack_payload" not in added
 
 
+def test_enrollment_covers_the_pad_without_weakening_the_score_gate():
+    added = added_lines(ENROLL_COVERAGE_PATCH)
+    removed = "\n".join(
+        line[1:]
+        for line in ENROLL_COVERAGE_PATCH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("-") and not line.startswith("---")
+    )
+
+    assert "#define GOODIX_ENROLL_SAMPLES 16" in added
+    assert "#define GOODIX_ENROLL_SAMPLES 8" in removed
+
+    # Tolerance must come from coverage, not from accepting weaker evidence.
+    assert "GOODIX_SIGFM_BEST_MIN" not in removed
+    assert "GOODIX_MIN_CAPTURE_KEYPOINTS" not in removed
+    assert "GOODIX_ENROLL_MAX_CLIPPED_FRACTION" not in removed
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -290,6 +308,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         CAPTURE_DIAG_PATCH.name,
         FDT_SETTLE_PATCH.name,
         REPLY_FRAMING_PATCH.name,
+        ENROLL_COVERAGE_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

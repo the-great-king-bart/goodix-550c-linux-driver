@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 14:05:00 +0200
+Subject: [PATCH] goodix550c: cover the pad with more enrollment samples
+
+Enrollment keeps one independent SIGFM template per sample and verification
+takes the best score across them, with no alignment or stitching. Matching
+therefore requires the verifying touch to overlap an enrolled position, and on
+this 108x88 pad eight positions do not cover it.
+
+Measured on the same finger. A session placed consistently scored 2508, 3609,
+264 and 2232 on four samples and 0 on the other four, matching easily. A
+session where the operator deliberately spread the eight placements, which is
+what every other reader invites, scored 0, 0, 0, 0, 0, 0, 1, 0 and did not
+match its own finger at all.
+
+Raise the sample count so ordinary varied placement still lands on an enrolled
+position. The score gate is untouched: an overlapping touch clears it more
+than twentyfold, so the shortfall is coverage rather than sensitivity, and
+lowering the gate instead would buy tolerance by accepting weaker evidence.
+
+Each added sample costs the operator one placement at enrollment.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -57,8 +57,21 @@
+ /* FDT base length */
+ #define GOODIX_FDT_BASE_LEN 24
+ 
+-/* Enroll stages */
+-#define GOODIX_ENROLL_SAMPLES 8
++/* Enroll stages.
++ *
++ * Enrollment keeps one independent SIGFM template per sample and verification
++ * takes the best score across them, with no alignment or stitching between
++ * samples. Matching therefore needs the verifying touch to overlap one enrolled
++ * position, and on a 108x88 pad eight positions do not cover it: an operator who
++ * deliberately spread eight placements, as every other reader invites, scored 0
++ * against all eight, while a session placed consistently scored 2508, 3609, 264
++ * and 2232 on four of them and 0 on the other four.
++ *
++ * The gate below is not the problem — an overlapping touch clears it more than
++ * twentyfold — so this raises coverage rather than lowering sensitivity. Each
++ * added sample costs the operator one placement.
++ */
++#define GOODIX_ENROLL_SAMPLES 16
+ 
+ /* SIGFM (SIFT-based) matching parameters.
+  * This gate is tuned for TX-off p3 preprocessing plus mutual SIGFM matching;
+

@@ -271,6 +271,34 @@ one in the same session fails because the device stops answering image requests 
 all-zero reference frame and a 95.2% railed capture. The rejection trial has not yet
 returned a verdict, so nothing is claimed about false accepts. See DOCUMENTATION.md.
 
+## Fingerprint app (private fprintd)
+
+The harnesses above are capture tests that discard everything. This is the real
+thing: the installed fprintd, running on a private non-activating D-Bus with only
+the project-local TOD module loaded, driven by fprintd's own client tools.
+
+```bash
+sudo scripts/goodix550c_fprintd_app.sh \
+  --stage-dir build/goodix550c-tod-cover \
+  --psk-file research/secrets/goodix550c.psk \
+  --allow-volatile-init --allow-manual-fdt-poll \
+  --enroll --finger right-index-finger
+```
+
+Swap `--enroll` for `--verify`, `--list` or `--delete`. Prompts come from fprintd
+and appear directly in your terminal, so run it yourself rather than through an
+assistant relay — the finger-up wait is bounded and relayed cues arrive too late.
+
+**This stores fingerprints**, unlike everything else in the project. Templates live
+in `build/goodix550c-fprintd-state/prints`, which is git-ignored; delete that
+directory to remove every template. The host `fprintd.service` is never started,
+stopped, or contacted, nothing is installed system-wide, and the driver's
+fail-closed policy is unchanged.
+
+fprintd asks PolicyKit before every device method, and a private bus has no polkit
+on it, so `scripts/goodix550c_private_polkit.py` answers on that socket alone. It
+authorizes `net.reactivated.fprint.*` and refuses everything else.
+
 ## Offline packet preview
 
 This produces the exact bytes without opening the USB device:

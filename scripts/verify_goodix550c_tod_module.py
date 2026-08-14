@@ -19,6 +19,7 @@ TOD_OPTIONS = ROOT / "tod" / "meson_options.txt"
 TOD_HARNESS = ROOT / "tools" / "goodix550c_tod_open_close.c"
 TOD_ENROLL_HARNESS = ROOT / "tools" / "goodix550c_tod_enroll.c"
 TOD_VERIFY_HARNESS = ROOT / "tools" / "goodix550c_tod_verify.c"
+TOD_PROBE_HARNESS = ROOT / "tools" / "goodix550c_tod_desync_probe.c"
 TOD_RUNNER = ROOT / "scripts" / "run_goodix550c_tod_open_close.sh"
 TOD_SMOKE = ROOT / "scripts" / "smoke_goodix550c_tod_fprintd.sh"
 
@@ -562,6 +563,37 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
         "TOD verification harness does not compare observed verdicts against expected ones",
         failures,
     )
+    probe_harness = read_text(TOD_PROBE_HARNESS, failures)
+    for marker in (
+        'g_strcmp0 (manual_fdt_gate, "1") == 0',
+        'g_getenv ("GOODIX550C_PSK") == NULL',
+        "fp_device_identify_sync (device, gallery, NULL, NULL, NULL,",
+        "#define PROBE_ACTIONS 3",
+    ):
+        require(
+            marker in probe_harness,
+            f"TOD desync probe invariant missing: {marker}",
+            failures,
+        )
+    # The probe exists to exercise the capture path, never to enrol or match.
+    for forbidden in (
+        "fp_device_enroll_sync",
+        "fp_print_serialize",
+        "g_file_set_contents",
+        "fopen",
+    ):
+        require(
+            forbidden not in probe_harness,
+            f"TOD desync probe must not enrol or persist data: {forbidden}",
+            failures,
+        )
+    require(
+        "g_ptr_array_new_with_free_func (g_object_unref)" in probe_harness
+        and "g_ptr_array_add (gallery" not in probe_harness,
+        "TOD desync probe gallery is not empty by construction",
+        failures,
+    )
+
     # A retry is the device asking for another placement, not a verdict.
     require(
         "#define VERIFY_MAX_RETRIES" in verify_harness
@@ -932,6 +964,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--harness", type=Path)
     parser.add_argument("--enroll-harness", type=Path)
     parser.add_argument("--verify-harness", type=Path)
+    parser.add_argument("--probe-harness", type=Path)
     parser.add_argument("--core-library", type=Path)
     parser.add_argument("--tod-library", type=Path)
     parser.add_argument("--build-dir", type=Path)
@@ -986,6 +1019,14 @@ def main(argv: list[str] | None = None) -> int:
             failures.extend(
                 audit_harness(
                     args.verify_harness.resolve(),
+                    args.core_library.resolve(),
+                    args.tod_library.resolve(),
+                )
+            )
+        if args.probe_harness is not None:
+            failures.extend(
+                audit_harness(
+                    args.probe_harness.resolve(),
                     args.core_library.resolve(),
                     args.tod_library.resolve(),
                 )

@@ -755,6 +755,39 @@ shift every later read by one transaction; `goodix_cmd_set_sleep_mode` requests 
 data reply, and the 550c is already known to answer at least one other command with
 an unrequested data reply (see `goodix_cmd_reset_sensor`).
 
+#### Desynchronization probe and the deactivation trigger (2026-08-14)
+
+Reproducing the post-action failure with the verification harness costs a full
+eight-stage enrollment plus two match trials. `tools/goodix550c_tod_desync_probe.c`
+reaches the same state with identification actions against an **empty gallery** —
+one placement each, nothing enrolled, nothing matched, nothing stored. The
+corruption appears in the following action's reference capture, which runs before
+contact is requested, so the answer arrives before that action asks for a finger.
+
+Patch `0008` reports the pack flag and byte counts of every assembled reply under
+the same experimental gate. Only framing metadata is logged; no payload is, and an
+image reply is still encrypted at that point.
+
+The first probe run produced a controlled comparison that the verification runs
+could not:
+
+```text
+action 1 ends in a retry (finger-up sub-SSM, no deactivation)
+  -> action 2 reference frame max=2885 mean=2331.2 clipped=0.0%   CLEAN
+```
+
+Against the verification run, where action 1 completed with a verdict, ran the
+deactivation sub-SSM, and the next reference frame measured `max=46`. **The
+deactivation exit path is the trigger, confirmed by its absence**: an action that
+ends in a retry leaves the next one healthy, and only a verdict-producing action
+reaches deactivation.
+
+Reply framing was identical and correct throughout that run — `pack flag=0xb2
+payload=14334 assembled=14338` on every image reply, across the action boundary. No
+shift. That does not yet test the desynchronization hypothesis, because this run
+never triggered the failure; doing so needs an action that produces a verdict
+followed by another, which is why the probe now runs three actions rather than two.
+
 #### Operator note
 
 Prompt timing matters more than technique. The driver waits for contact to settle,
@@ -766,7 +799,7 @@ whole enrollment.
 ## Verification
 
 ```text
-project pytest:        54 passed
+project pytest:        55 passed
 offline TLS pair test: passed, correct identity/cipher/decrypt + wrong-ID rejection
 native 13021 FDT test: passed, production command branch + encoder + packed wire frame
 native manual FDT:     passed, strict boundary/malformed input/dual-gate policy
@@ -786,6 +819,7 @@ live TOD enrollment:   passed 8/8 stages, 0 rejections, every frame 0.0% clipped
 capture-path audit:    passed, frame diagnostic gated and covers both readouts
 contact-settle audit:  passed, confirmed contact reaches capture via the window
 live TOD verification: first match per session correct; later ones read a dead sensor
+desync probe:          deactivation confirmed as the trigger by its absence
 ```
 
 Every line above was produced after the bounded revision of patch `0005`, including
@@ -828,6 +862,7 @@ intentionally condensed.
 │   ├── 0005-goodix550c-add-guarded-manual-fdt-poll.patch
 │   ├── 0006-goodix550c-log-capture-path-diagnostics.patch
 │   ├── 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
+│   ├── 0008-goodix550c-report-reply-framing.patch
 │   ├── driver-series                 # ordered driver-repository patches
 │   └── README.md                     # patch-series threat model
 ├── pyproject.toml                    # Python package/test/lint metadata
@@ -915,8 +950,10 @@ auditable.
 
 Verification is now partly answered. An enrolled template matches the finger that
 produced it on the first verification of a session; every later verification in the
-same session fails because the device stops answering image requests, which is the
-current work item. A rejection trial against a different finger has not yet returned
+same session fails because the device stops answering image requests. That failure is
+now isolated to the deactivation exit path, which only a verdict-producing action
+reaches; an action ending in a retry leaves the next one healthy. Whether the cause
+is a reply left queued after that path is still open. A rejection trial against a different finger has not yet returned
 a verdict, so the false-accept side is untested and no claim is made about it.
 
 Module installation and PAM integration remain separate phases, and no driver has

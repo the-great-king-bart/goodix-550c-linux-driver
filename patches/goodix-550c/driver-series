@@ -5,3 +5,4 @@
 0005-goodix550c-add-guarded-manual-fdt-poll.patch
 0006-goodix550c-log-capture-path-diagnostics.patch
 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
+0008-goodix550c-report-reply-framing.patch

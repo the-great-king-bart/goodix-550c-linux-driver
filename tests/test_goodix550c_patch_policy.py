@@ -17,6 +17,7 @@ FDT_13021_PATCH = PATCH_DIR / "0004-goodix550c-use-13021-fdt-down-layout.patch"
 MANUAL_FDT_PATCH = PATCH_DIR / "0005-goodix550c-add-guarded-manual-fdt-poll.patch"
 CAPTURE_DIAG_PATCH = PATCH_DIR / "0006-goodix550c-log-capture-path-diagnostics.patch"
 FDT_SETTLE_PATCH = PATCH_DIR / "0007-goodix550c-settle-manual-fdt-contact-before-capture.patch"
+REPLY_FRAMING_PATCH = PATCH_DIR / "0008-goodix550c-report-reply-framing.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -252,6 +253,18 @@ def test_manual_fdt_contact_settles_before_the_capture_reads_the_pad():
     assert "goodix_cmd_" not in added
 
 
+def test_reply_framing_diagnostic_is_gated_and_reports_only_metadata():
+    added = added_lines(REPLY_FRAMING_PATCH)
+
+    assert "Reply framing: pack flag=0x%02x payload=%zu assembled=%zu" in added
+    assert "goodix_550c_manual_fdt_poll_allowed ()" in added
+    assert "goodix_proto_rx_pack (&self->rx, &pack_flag, &pack_payload," in added
+
+    # Framing metadata only: the payload pointer is fetched but never logged.
+    assert "pack_payload[" not in added
+    assert "%s\", pack_payload" not in added
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -276,6 +289,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         MANUAL_FDT_PATCH.name,
         CAPTURE_DIAG_PATCH.name,
         FDT_SETTLE_PATCH.name,
+        REPLY_FRAMING_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

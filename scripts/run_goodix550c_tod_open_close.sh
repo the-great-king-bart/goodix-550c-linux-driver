@@ -22,7 +22,7 @@ usage() {
     printf '%s\n' \
         "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE \\" \
         '  --expected-psk-hash LIVE_HASH_FILE --allow-volatile-init \\' \
-        '  [--allow-manual-fdt-poll] [--enroll|--verify] [--debug]' \
+        '  [--allow-manual-fdt-poll] [--enroll|--verify|--desync-probe] [--debug]' \
         '' \
         'All paths must resolve below this project. The stage must have been' \
         'built with both experimental options. This wrapper stops no service or' \
@@ -70,6 +70,9 @@ while (($#)); do
             ;;
         --verify)
             ACTION=verify
+            ;;
+        --desync-probe)
+            ACTION=desync-probe
             ;;
         --debug)
             DEBUG_LOG=1
@@ -139,6 +142,15 @@ if [[ "$ACTION" == enroll ]]; then
     HARNESS="$STAGE_DIR/builddir/goodix550c-tod-enroll"
     HARNESS_METADATA_KEY=enroll_harness_sha256
     HARNESS_TIMEOUT=240s
+elif [[ "$ACTION" == desync-probe ]]; then
+    if ((MANUAL_FDT_ACK != 1)); then
+        printf 'Refusing: --desync-probe requires --allow-manual-fdt-poll.\n' >&2
+        exit 2
+    fi
+    # Two identification actions, only the first of which needs a finger.
+    HARNESS="$STAGE_DIR/builddir/goodix550c-tod-desync-probe"
+    HARNESS_METADATA_KEY=probe_harness_sha256
+    HARNESS_TIMEOUT=300s
 elif [[ "$ACTION" == verify ]]; then
     if ((MANUAL_FDT_ACK != 1)); then
         printf 'Refusing: --verify requires --allow-manual-fdt-poll.\n' >&2

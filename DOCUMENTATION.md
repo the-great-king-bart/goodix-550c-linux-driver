@@ -755,38 +755,85 @@ shift every later read by one transaction; `goodix_cmd_set_sleep_mode` requests 
 data reply, and the 550c is already known to answer at least one other command with
 an unrequested data reply (see `goodix_cmd_reset_sensor`).
 
-#### Desynchronization probe and the deactivation trigger (2026-08-14)
+#### Desynchronization probe and the shutdown-completion result (2026-08-14)
 
 Reproducing the post-action failure with the verification harness costs a full
-eight-stage enrollment plus two match trials. `tools/goodix550c_tod_desync_probe.c`
-reaches the same state with identification actions against an **empty gallery** —
-one placement each, nothing enrolled, nothing matched, nothing stored. The
-corruption appears in the following action's reference capture, which runs before
-contact is requested, so the answer arrives before that action asks for a finger.
+eight-stage enrollment plus match trials. `tools/goodix550c_tod_desync_probe.c`
+reaches the capture path with identification actions against an **empty gallery** —
+one placement each, nothing enrolled, matched, or stored.
 
 Patch `0008` reports the pack flag and byte counts of every assembled reply under
 the same experimental gate. Only framing metadata is logged; no payload is, and an
 image reply is still encrypted at that point.
 
-The first probe run produced a controlled comparison that the verification runs
-could not:
+**Read desynchronization is ruled out.** Across the action boundary into a dead
+reference frame, the framing is exactly that of a healthy read:
 
 ```text
-action 1 ends in a retry (finger-up sub-SSM, no deactivation)
-  -> action 2 reference frame max=2885 mean=2331.2 clipped=0.0%   CLEAN
+Reply framing: pack flag=0xb2 payload=14334 assembled=14338
+reference frame  min=0 max=0 mean=0.0 sum=00000000
 ```
 
-Against the verification run, where action 1 completed with a verdict, ran the
-deactivation sub-SSM, and the next reference frame measured `max=46`. **The
-deactivation exit path is the trigger, confirmed by its absence**: an action that
-ends in a retry leaves the next one healthy, and only a verdict-producing action
-reaches deactivation.
+Right pack type, right length, no shift, no stale reply. The sensor returns a
+properly framed, correctly decrypted image that is entirely zeros.
 
-Reply framing was identical and correct throughout that run — `pack flag=0xb2
-payload=14334 assembled=14338` on every image reply, across the action boundary. No
-shift. That does not yet test the desynchronization hypothesis, because this run
-never triggered the failure; doing so needs an action that produces a verdict
-followed by another, which is why the probe now runs three actions rather than two.
+**What actually leaves the sensor dead is a shutdown that does not complete.** The
+finger-up wait is bounded at 600 polls; when the operator holds past it, the SSM
+fails and the sensor is left mid-sequence without its sleep:
+
+```text
+SSM GOODIX_FINGER_UP_NUM_STATES failed in state 7 with error:
+  Manual-FDT finger-up did not settle within 600 polls
+-> next action reference frame max=0
+```
+
+With the lift cued at the right moment the same path completes and the next action
+reads a clean reference frame (`max=2917 mean=2363.0 clipped=0.0%`). That was
+measured both ways.
+
+Two earlier readings were wrong and are recorded as such. Sleep is not the trigger:
+the open sequence ends with `GOODIX_OPEN_SLEEP`, the same command, and the next
+action is fine. Deactivation alone is not established either: the one observation
+behind that idea (a matching verification followed by a dead frame) has not been
+reproduced, and the probe cannot reach deactivation at all, because
+`verify_wait_finger_up` is cleared only by a successful match or an unusable
+template and an empty gallery yields neither. A patch arming the FDT before the
+deactivation sleep was written and **dropped unvalidated** for that reason, as was
+an earlier patch marking the device for reinitialization after deactivation, which
+was measured and did not help.
+
+#### Operator cue timing is part of the driver contract
+
+Both harnesses issue the lift instruction from the callback that fires when a
+result is known — `on_enroll_progress` for a stage, `on_match_reported` for a
+match — never from the call's return path. The return happens *after* the bounded
+finger-up wait, so a lift cued there arrives after the wait it is meant to satisfy,
+and the shutdown then aborts on a spent budget and leaves the sensor unreadable for
+the next action. This is not cosmetic: it produced three separate failed runs before
+it was understood.
+
+#### Verification result (2026-08-14)
+
+With that fixed, a full run completes cleanly end to end — eight enrollment stages,
+three trials, every trial returning a verdict, the device closed cleanly, and no
+dead frames anywhere in the session. **Matching, however, failed:**
+
+```text
+Trial 1 (same finger)       no match   SIGFM best score 1   (threshold 150)
+Trial 2 (same finger)       no match   SIGFM best score 8
+Trial 3 (different finger)  no match   SIGFM best score 0
+Verification summary: 3/3 trials returned a verdict, 0 matched, 2 expected
+```
+
+Scores of 1 and 8 against a 150 threshold are not near misses; the probe and the
+template share essentially no features. An earlier run did return
+`Trial 1/3 result: MATCH`, so the pipeline can match, and the capture frames give no
+hint as to the difference — enrollment and trial images sit in the same range
+(`mean` 1490-1600, every frame `clipped=0.0%`). This is unexplained and is the
+current work item.
+
+Because every trial scored near zero, trial 3's correct rejection carries no
+information about discrimination. **No claim is made about false accepts.**
 
 #### Operator note
 
@@ -818,8 +865,9 @@ live TOD open/close:   passed 3/3 against installed 1.95.1+tod1, pad clear
 live TOD enrollment:   passed 8/8 stages, 0 rejections, every frame 0.0% clipped
 capture-path audit:    passed, frame diagnostic gated and covers both readouts
 contact-settle audit:  passed, confirmed contact reaches capture via the window
-live TOD verification: first match per session correct; later ones read a dead sensor
-desync probe:          deactivation confirmed as the trigger by its absence
+live TOD verification: session completes 3/3 trials cleanly; matching scores near zero
+desync probe:          read desynchronization ruled out; framing correct across the boundary
+shutdown completion:   an aborted finger-up wait leaves the next action unreadable
 ```
 
 Every line above was produced after the bounded revision of patch `0005`, including
@@ -950,10 +998,19 @@ auditable.
 
 Verification is now partly answered. An enrolled template matches the finger that
 produced it on the first verification of a session; every later verification in the
-same session fails because the device stops answering image requests. That failure is
-now isolated to the deactivation exit path, which only a verdict-producing action
-reaches; an action ending in a retry leaves the next one healthy. Whether the cause
-is a reply left queued after that path is still open. A rejection trial against a different finger has not yet returned
+same session used to fail because the device stopped answering image requests. That
+is now understood for the reproducible case: a shutdown whose bounded finger-up wait
+expires leaves the sensor mid-sequence without its sleep, and the next action reads
+an all-zero frame. Cueing the operator's lift from the result callback rather than
+the call's return keeps the shutdown complete, and a full session now runs end to
+end with no dead frames. Read desynchronization is ruled out: reply framing across
+the boundary is byte-for-byte that of a healthy read.
+
+What is now open is matching itself. A complete run returned a verdict for all three
+trials but scored 1, 8 and 0 against a threshold of 150, so the same finger did not
+match its own template. An earlier run did match, and the capture frames are
+indistinguishable between the two, so the cause is not yet known. Because every
+trial scored near zero, nothing is claimed about false accepts. A rejection trial against a different finger has not yet returned
 a verdict, so the false-accept side is untested and no claim is made about it.
 
 Module installation and PAM integration remain separate phases, and no driver has

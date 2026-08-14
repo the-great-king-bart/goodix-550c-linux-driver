@@ -530,7 +530,7 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
         "fp_device_has_feature (device, FP_DEVICE_FEATURE_VERIFY)",
         "fp_device_open_sync (device, NULL, &error)",
         "fp_device_enroll_sync (device",
-        "fp_device_verify_sync (device, enrolled, NULL, NULL, NULL,",
+        "fp_device_verify_sync (device, enrolled, NULL, on_match_reported, NULL,",
         "fp_device_close_sync (device, NULL, &error)",
         "_exit (verified_ok ? 0 : 1)",
     ):
@@ -567,7 +567,7 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
     for marker in (
         'g_strcmp0 (manual_fdt_gate, "1") == 0',
         'g_getenv ("GOODIX550C_PSK") == NULL',
-        "fp_device_identify_sync (device, gallery, NULL, NULL, NULL,",
+        "fp_device_identify_sync (device, gallery, NULL, on_match_reported,",
         "#define PROBE_ACTIONS 3",
     ):
         require(

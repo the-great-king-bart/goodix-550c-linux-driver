@@ -72,6 +72,32 @@ on_finger_status_changed (GObject    *object,
   fflush (stdout);
 }
 
+/**
+ * on_match_reported:
+ *
+ * Runs when the device has a result, which is before the driver waits for the
+ * pad to clear. That wait is bounded at 600 polls, so the lift instruction has
+ * to go out here: issuing it when the action returns would arrive after the
+ * wait it is meant to satisfy, and a shutdown that aborts on a spent budget
+ * leaves the sensor unable to read the next frame at all.
+ */
+static void
+on_match_reported (FpDevice *device,
+                   FpPrint  *match,
+                   FpPrint  *print,
+                   gpointer  user_data,
+                   GError   *error)
+{
+  (void) device;
+  (void) match;
+  (void) print;
+  (void) user_data;
+  (void) error;
+
+  puts (">>> LIFT your finger off the sensor.");
+  fflush (stdout);
+}
+
 int
 main (void)
 {
@@ -125,19 +151,18 @@ main (void)
       printf (">>> ACTION %d/%d starting.\n", action + 1, PROBE_ACTIONS);
       fflush (stdout);
 
-      if (!fp_device_identify_sync (device, gallery, NULL, NULL, NULL,
-                                    &matched, &scanned, &error))
+      if (!fp_device_identify_sync (device, gallery, NULL, on_match_reported,
+                                    NULL, &matched, &scanned, &error))
         {
-          printf ("Action %d/%d ended with: %s\n>>> LIFT your finger off the sensor.\n",
-                  action + 1, PROBE_ACTIONS, error->message);
+          printf ("Action %d/%d ended with: %s\n", action + 1, PROBE_ACTIONS,
+                  error->message);
           fflush (stdout);
           g_clear_error (&error);
           continue;
         }
 
       /* An empty gallery cannot match; only the capture path is under test. */
-      printf ("Action %d/%d completed (no gallery entry to match).\n"
-              ">>> LIFT your finger off the sensor.\n",
+      printf ("Action %d/%d completed (no gallery entry to match).\n",
               action + 1, PROBE_ACTIONS);
       fflush (stdout);
     }

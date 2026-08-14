@@ -290,7 +290,10 @@ and appear directly in your terminal, so run it yourself rather than through an
 assistant relay — the finger-up wait is bounded and relayed cues arrive too late.
 
 `--gui` opens a dark-themed window instead, with the finger picker, a progress bar
-and Enrol/Verify/Stop/Delete buttons. That is the only mode whose prompts are
+and Enrol/Verify/Stop/Delete buttons. "Verify against any enrolled finger" is on by
+default, which is what a login gate does; with it off, verification loads only the
+named slot. That distinction matters if you store extra passes of one finger under
+spare slots to improve coverage, because a named verify would never look at them. That is the only mode whose prompts are
 visible when somebody other than the operator starts the session, because a
 terminal program can only prompt in a terminal its own operator is attached to.
 The window runs as the desktop user while the daemon runs as root for USB, so the

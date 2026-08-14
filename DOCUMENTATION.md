@@ -706,6 +706,55 @@ created lazily by SIGFM extraction and exposes no join API. The harness now flus
 and calls `_exit` after the device is closed, so global destructors never run beside
 those threads.
 
+#### Verification harness and result (2026-08-14)
+
+`tools/goodix550c_tod_verify.c` answers the next question: does a template this
+driver enrolls actually match the finger that produced it, and reject one that did
+not. It enrolls, holds the template **in process memory only**, and runs match
+trials against it. Neither the template nor any scanned print is serialized,
+written, printed, or hashed. It is selected with `--verify` through the same guarded
+wrapper, requires the same manual-FDT acknowledgement, and is bounded at 420 s.
+
+Two of its three trials use the enrolled finger and one uses a different finger. A
+positive-only test would pass just as well against a driver that matched
+everything, so the rejection trial is what gives the result meaning; the audit
+requires it to exist. Retry-class errors re-prompt rather than consuming a trial,
+because this driver also raises `FP_DEVICE_RETRY_REMOVE_FINGER` for a capture with
+too few SIFT keypoints.
+
+**The first verification of a session matches correctly.** `Trial 1/3 result: MATCH
+(expected MATCH)` on both runs, from a clean capture (`clipped=0.0%`).
+
+**Every later verification in the same session fails**, and not on the match: the
+device stops answering image requests.
+
+```text
+trial 1  reference max=2914 mean=2359.5   capture clipped=0.0%   -> MATCH
+trial 2  reference max=46   mean=0.0      capture clipped=95.2%  -> retry
+trial 3  reference max=0    mean=0.0      capture clipped=95.2%  -> retry
+```
+
+Two observations constrain the cause:
+
+- the sleep command is not it. The enrollment loop reaches
+  `GOODIX_FINGER_UP_SLEEP` after every one of its eight stages and its next
+  reference frame is clean, so the difference is the deactivation exit path that
+  only verification and identification reach; and
+- the failing captures report `mean=4012.1` and `clipped=95.2%` **identically**
+  across four attempts, two runs and two fingers, but with four different
+  checksums. The same pixel histogram in a different arrangement is not a sensor
+  reading a finger; it points at a misaligned or stale payload, that is, read
+  desynchronization rather than a dead sensor.
+
+A patch that marked the device as needing reinitialization after deactivation was
+written, measured, and **discarded**: the reinit fires and re-runs the whole open
+sequence including the USB reset, and the frames stay dead. It cost a full re-open
+per verification and fixed nothing, so it is not in the series. The remaining
+suspect is an unconsumed reply left queued after the first action, which would
+shift every later read by one transaction; `goodix_cmd_set_sleep_mode` requests no
+data reply, and the 550c is already known to answer at least one other command with
+an unrequested data reply (see `goodix_cmd_reset_sensor`).
+
 #### Operator note
 
 Prompt timing matters more than technique. The driver waits for contact to settle,
@@ -717,7 +766,7 @@ whole enrollment.
 ## Verification
 
 ```text
-project pytest:        53 passed
+project pytest:        54 passed
 offline TLS pair test: passed, correct identity/cipher/decrypt + wrong-ID rejection
 native 13021 FDT test: passed, production command branch + encoder + packed wire frame
 native manual FDT:     passed, strict boundary/malformed input/dual-gate policy
@@ -736,6 +785,7 @@ live TOD open/close:   passed 3/3 against installed 1.95.1+tod1, pad clear
 live TOD enrollment:   passed 8/8 stages, 0 rejections, every frame 0.0% clipped
 capture-path audit:    passed, frame diagnostic gated and covers both readouts
 contact-settle audit:  passed, confirmed contact reaches capture via the window
+live TOD verification: first match per session correct; later ones read a dead sensor
 ```
 
 Every line above was produced after the bounded revision of patch `0005`, including
@@ -863,8 +913,11 @@ later. Patch `0007` settles the contact for 300 ms before capturing. The earlier
 hypothesis is retained above, marked wrong, so the reasoning that replaced it stays
 auditable.
 
-Verification of an enrolled template against a live finger is the next phase and has
-not been attempted.
+Verification is now partly answered. An enrolled template matches the finger that
+produced it on the first verification of a session; every later verification in the
+same session fails because the device stops answering image requests, which is the
+current work item. A rejection trial against a different finger has not yet returned
+a verdict, so the false-accept side is untested and no claim is made about it.
 
 Module installation and PAM integration remain separate phases, and no driver has
 been installed system-wide.

@@ -22,6 +22,7 @@ TOD_OPTIONS = ROOT / "tod" / "meson_options.txt"
 BUS_CONFIG = ROOT / "tod" / "private-bus.conf"
 TOD_HARNESS = ROOT / "tools" / "goodix550c_tod_open_close.c"
 TOD_ENROLL_HARNESS = ROOT / "tools" / "goodix550c_tod_enroll.c"
+TOD_VERIFY_HARNESS = ROOT / "tools" / "goodix550c_tod_verify.c"
 
 
 def _load_verifier():
@@ -224,6 +225,38 @@ def test_enroll_harness_cues_the_lift_on_time_and_exits_beside_live_threads():
     # The template is still never persisted.
     for forbidden in ("fp_print_serialize", "fp_print_to_file", "g_file_set_contents", "fopen"):
         assert forbidden not in harness
+
+
+def test_verify_harness_tests_a_rejection_and_never_stores_a_template():
+    harness = TOD_VERIFY_HARNESS.read_text(encoding="utf-8")
+    runner = LIVE_RUNNER.read_text(encoding="utf-8")
+
+    # A positive-only test would pass against a driver that matched everything.
+    assert "#define VERIFY_DIFFERENT_FINGER_TRIALS 1" in harness
+    assert "expect no match" in harness
+    assert "expect a match" in harness
+    assert "observed_matches == expected_matches" in harness
+    assert "verdicts == VERIFY_TRIALS" in harness
+
+    # The template and every scanned print stay in process memory.
+    for forbidden in ("fp_print_serialize", "fp_print_to_file", "g_file_set_contents", "fopen"):
+        assert forbidden not in harness
+    assert "fp_device_verify_sync (device, enrolled, NULL, NULL, NULL," in harness
+    assert "g_autoptr(FpPrint) scanned = NULL;" in harness
+
+    # A retry is the device asking for another placement, not a verdict.
+    assert "#define VERIFY_MAX_RETRIES" in harness
+    assert "error->domain == FP_DEVICE_RETRY" in harness
+
+    # Same fail-closed profile as the other harnesses.
+    assert 'g_strcmp0 (manual_fdt_gate, "1") == 0' in harness
+    assert "fp_device_has_feature (device, FP_DEVICE_FEATURE_VERIFY)" in harness
+    assert "_exit (verified_ok ? 0 : 1)" in harness
+
+    # The wrapper selects it under the same acknowledgement, with its own digest.
+    assert "--verify requires --allow-manual-fdt-poll" in runner
+    assert "HARNESS_METADATA_KEY=verify_harness_sha256" in runner
+    assert "goodix550c-tod-verify" in runner
 
 
 def test_private_bus_smoke_is_non_activating_and_hides_usb():

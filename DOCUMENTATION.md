@@ -942,10 +942,78 @@ several seconds. But each stage must be followed by a prompt lift: the finger-up
 wait is bounded at 600 polls (60 s), and a stage that is held past it fails the
 whole enrollment.
 
+### Measured verification latency
+
+The retry budget from `0012` is sized for a fifteen-second worst case, but that is
+the ceiling, not the cost. Measured from the `VerifyStart` authorization to the
+reported score across the three-finger session:
+
+```text
+15:18:29.691 -> 15:18:32.017   2.33 s
+15:19:28.588 -> 15:19:30.192   1.60 s
+15:20:29.046 -> 15:20:31.020   1.97 s
+```
+
+Those spans include the operator placing a finger. The deepest empty-reference
+burst in the same session retried five times, not sixty, so the absorbed blackout
+cost at most about 1.6 s. Verification latency is therefore acceptable for an
+authentication prompt; the fifteen-second budget is headroom that was not used.
+
+## Host installation and the login factor
+
+`scripts/goodix550c_install_system.sh` is the one script in this project that
+deliberately changes the system, and it is split so that each change can be taken
+and reversed on its own:
+
+| Stage | Effect | Reverse |
+| --- | --- | --- |
+| `--install-driver` | Host fprintd can use the sensor. Login unchanged. | `--uninstall` |
+| `--enable-login` | `pam_fprintd` becomes a login factor. | `--disable-login` |
+| `--status` | Reports what is installed. Changes nothing. | — |
+
+Installing the driver places the module in `/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1`,
+the PSK at `/etc/goodix550c/goodix550c.psk` (mode 0600, root-owned), and a systemd
+drop-in that opts the host daemon into the same two default-off gates every private
+harness uses, plus `FP_DRIVERS_ALLOWLIST=goodix53x5`. It revalidates the full live
+profile first — driver commit, firmware, USB id, libfprint and fprintd versions,
+module digest, and the audited source checksums — so a module built against
+anything else cannot reach the host daemon. Enrolled templates are copied from the
+project state directory to `/var/lib/fprint`, and existing ones are never
+overwritten without `--replace-prints`.
+
+Splitting the stages is the point: between them, the driver can be proven against
+the real host service with `fprintd-list` and `fprintd-verify` while the login
+prompt is still untouched.
+
+### Why a sensor fault cannot lock the account out
+
+Ubuntu's `/usr/share/pam-configs/fprintd` registers the module as:
+
+```text
+[success=end default=ignore]	pam_fprintd.so max-tries=1 timeout=10
+```
+
+`default=ignore` means any outcome other than success — a failed finger, a missing
+sensor, a driver that will not load — falls through to the next primary module,
+which is `pam_unix`. The password therefore remains a full authentication path at
+all times, and the fingerprint is strictly an additional way in.
+
+That property is what makes the factor safe to enable, so `--enable-login` verifies
+it in the shipped PAM config rather than assuming it, and refuses if a future
+package revision drops it.
+
+### What is still unmeasured
+
+The false-accept rate. Every score recorded so far comes from the enrolled finger,
+so the project can state that the sensor recognises the enrolled operator and
+cannot yet state that it rejects anybody else. `scripts/goodix550c_score_report.py`
+produces the genuine-versus-impostor distribution once labelled impostor
+presentations exist. Until they do, `--enable-login` should not be run.
+
 ## Verification
 
 ```text
-project pytest:        55 passed
+project pytest:        61 passed
 offline TLS pair test: passed, correct identity/cipher/decrypt + wrong-ID rejection
 native 13021 FDT test: passed, production command branch + encoder + packed wire frame
 native manual FDT:     passed, strict boundary/malformed input/dual-gate policy
@@ -1010,6 +1078,11 @@ intentionally condensed.
 │   ├── 0006-goodix550c-log-capture-path-diagnostics.patch
 │   ├── 0007-goodix550c-settle-manual-fdt-contact-before-capture.patch
 │   ├── 0008-goodix550c-report-reply-framing.patch
+│   ├── 0009-goodix550c-cover-pad-with-more-enroll-samples.patch
+│   ├── 0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch
+│   ├── 0011-goodix550c-refuse-empty-reference-frame.patch
+│   ├── 0012-goodix550c-size-reference-retry-to-blackout.patch
+│   ├── 0013-goodix550c-keep-sensor-awake-between-enroll-stages.patch
 │   ├── driver-series                 # ordered driver-repository patches
 │   └── README.md                     # patch-series threat model
 ├── pyproject.toml                    # Python package/test/lint metadata
@@ -1026,6 +1099,11 @@ intentionally condensed.
 │   ├── build_goodix550c_tod_module.sh # exact Ubuntu TOD module build
 │   ├── fetch_ubuntu_tod_sdk.sh       # pinned dev-package fetch/extract
 │   ├── fetch_upstream_sources.sh     # exact public git fetch/verification
+│   ├── find_goodix550c_usb_node.py   # single-pass 27c6:550c node resolution
+│   ├── goodix550c_fprintd_app.sh     # private-fprintd enrol/verify session
+│   ├── goodix550c_install_system.sh  # staged host install + login factor
+│   ├── goodix550c_private_polkit.py  # session-only fprintd authorization stub
+│   ├── goodix550c_score_report.py    # genuine/impostor score distributions
 │   ├── inventory.sh                  # passive host/USB inventory
 │   ├── pe_string_xrefs.py            # offline PE string/xref helper
 │   ├── recover_windows_dpapi_psk.py  # offline, non-printing DPAPI recovery
@@ -1053,6 +1131,7 @@ intentionally condensed.
 │   ├── test_protocol.py
 │   └── test_usb_probe.py
 ├── tod/
+│   ├── app-bus.conf                   # windowed-session bus template
 │   ├── goodix550c-sources.txt        # exact 32-file source allowlist
 │   ├── goodix550c-tod-entry.c        # external TOD registration entry
 │   ├── goodix550c-tod.map            # one-symbol export map
@@ -1060,9 +1139,12 @@ intentionally condensed.
 │   ├── meson_options.txt              # exact paths + two default-off gates
 │   └── private-bus.conf               # non-activating smoke bus template
 └── tools/
+    ├── goodix550c_gui.py             # dark-themed enrol/verify/delete window
     ├── goodix550c_open_close.c       # isolated-build TLS open/close harness
+    ├── goodix550c_tod_desync_probe.c # read-framing probe across the boundary
     ├── goodix550c_tod_enroll.c       # installed-runtime enrollment capture test
-    └── goodix550c_tod_open_close.c   # installed-runtime TOD open/close harness
+    ├── goodix550c_tod_open_close.c   # installed-runtime TOD open/close harness
+    └── goodix550c_tod_verify.c       # installed-runtime verification harness
 ```
 
 Update this tree whenever project files are added, removed, or moved.

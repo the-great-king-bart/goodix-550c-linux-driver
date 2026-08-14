@@ -302,6 +302,30 @@ def test_private_bus_smoke_is_non_activating_and_hides_usb():
     assert "<standard_session_servicedirs/>" not in bus_config
 
 
+def test_the_driver_declines_openssl_s_process_wide_atexit_handler():
+    patch = (
+        ROOT
+        / "patches"
+        / "goodix-550c"
+        / "0014-goodix550c-stop-openssl-installing-an-atexit-handler.patch"
+    ).read_text(encoding="utf-8")
+    series = (ROOT / "patches" / "goodix-550c" / "driver-series").read_text(encoding="utf-8")
+
+    assert "0014-goodix550c-stop-openssl-installing-an-atexit-handler.patch" in series
+
+    # The flag has to reach OpenSSL before anything initializes it implicitly,
+    # so the call belongs on the path every TLS session already runs through.
+    assert "+  OPENSSL_init_ssl (OPENSSL_INIT_NO_ATEXIT, NULL);" in patch
+    assert "+  goodix_tls_ensure_openssl ();" in patch
+    assert "goodix53x5-tls.c" in patch
+
+    # The audit refuses a build whose TLS engine lost the flag again.
+    assert VERIFIER.__file__
+    verifier = Path(VERIFIER.__file__).read_text(encoding="utf-8")
+    assert "OPENSSL_init_ssl (OPENSSL_INIT_NO_ATEXIT, NULL)" in verifier
+    assert "process-wide atexit handler" in verifier
+
+
 def test_system_installer_stages_the_login_factor_and_stays_reversible():
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 

@@ -248,7 +248,10 @@ install_driver() {
     # same way every project harness does, and the allowlist keeps the host
     # daemon from probing unrelated hardware with an untested driver set.
     install -d -m 0755 -o root -g root "$DROPIN_DIR"
-    install -m 0644 -o root -g root /dev/stdin "$DROPIN" <<EOF
+    # Written by redirect rather than `install /dev/stdin`: under sudo the
+    # heredoc's /dev/stdin does not reliably resolve, and install(1) then fails
+    # after the module is already in place.
+    cat > "$DROPIN" <<EOF
 # Installed by scripts/goodix550c_install_system.sh. Remove with --uninstall.
 [Service]
 Environment=FP_DRIVERS_ALLOWLIST=goodix53x5
@@ -256,6 +259,8 @@ Environment=GOODIX550C_ALLOW_VOLATILE_INIT=1
 Environment=GOODIX550C_ALLOW_MANUAL_FDT_POLL=1
 Environment=GOODIX550C_PSK_FILE=$INSTALLED_PSK
 EOF
+    chown root:root "$DROPIN"
+    chmod 0644 "$DROPIN"
 
     migrate_prints
     systemctl daemon-reload

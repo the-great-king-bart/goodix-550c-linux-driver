@@ -23,6 +23,7 @@ RETRY_REASON_PATCH = PATCH_DIR / "0010-goodix550c-distinguish-lifted-finger-from
 REFERENCE_SIGNAL_PATCH = PATCH_DIR / "0011-goodix550c-refuse-empty-reference-frame.patch"
 RETRY_BUDGET_PATCH = PATCH_DIR / "0012-goodix550c-size-reference-retry-to-blackout.patch"
 KEEP_AWAKE_PATCH = PATCH_DIR / "0013-goodix550c-keep-sensor-awake-between-enroll-stages.patch"
+NO_ATEXIT_PATCH = PATCH_DIR / "0014-goodix550c-stop-openssl-installing-an-atexit-handler.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -373,6 +374,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         REFERENCE_SIGNAL_PATCH.name,
         RETRY_BUDGET_PATCH.name,
         KEEP_AWAKE_PATCH.name,
+        NO_ATEXIT_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

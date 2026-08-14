@@ -351,6 +351,14 @@ def audit_sources(source_root: Path, sdk_root: Path) -> list[str]:
         "long-lived TLS PSK is not cleansed",
         failures,
     )
+    # Implicit OpenSSL initialization registers OPENSSL_cleanup with atexit(),
+    # which then runs on the host process's exit path with its worker threads
+    # still live. That crashed fprintd on every shutdown that opened the sensor.
+    require(
+        "OPENSSL_init_ssl (OPENSSL_INIT_NO_ATEXIT, NULL)" in tls,
+        "OpenSSL is left free to install a process-wide atexit handler",
+        failures,
+    )
 
     pids = set(re.findall(r"\.pid\s*=\s*0x([0-9a-fA-F]+)", device))
     vids = set(re.findall(r"\.vid\s*=\s*0x([0-9a-fA-F]+)", device))

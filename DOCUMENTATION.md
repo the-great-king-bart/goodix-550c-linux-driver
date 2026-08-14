@@ -1082,6 +1082,34 @@ after it had closed. The same operator matched at 8903 through the windowed app
 seconds earlier, so this is a cue-latency limit and not a driver fault. PAM
 authentication has to be exercised by the operator at a prompt they can see.
 
+#### The daemon crashed on the way out
+
+Installed for the host, `fprintd` dumped core on shutdown after any session that
+had opened the sensor:
+
+```text
+#4  OPENSSL_cleanup      (libcrypto.so.3)
+#5  __run_exit_handlers  (libc.so.6)
+#6  __GI_exit            (libc.so.6)
+```
+
+with three GLib worker threads still live in the same dump. This driver is the
+only thing in `fprintd` that touches OpenSSL, and `SSL_CTX_new` initializes it
+implicitly, which registers `OPENSSL_cleanup` with `atexit`. That handler runs
+during the host's exit and tears OpenSSL down underneath threads that have not
+stopped.
+
+The crash lands after the action completes, so authentication itself was never
+affected and D-Bus activation restarted the daemon on the next request. It still
+filed a crash report every time and left systemd recording the unit as failed,
+which is not acceptable for a daemon on the authentication path.
+
+Patch `0014` initializes OpenSSL explicitly with `OPENSSL_INIT_NO_ATEXIT` before
+anything can initialize it implicitly. A driver loaded into somebody else's
+process should not install a process-wide exit handler at all. Verified by
+repeating the exact conditions — open the sensor, cancel, stop the service —
+which now logs `Deactivated successfully` with no new core dump.
+
 #### Scope: every sudo now waits
 
 `pam-auth-update` installs the stanza into `common-auth`, which every PAM service
@@ -1093,7 +1121,7 @@ operator decides.
 ## Verification
 
 ```text
-project pytest:        61 passed
+project pytest:        62 passed
 offline TLS pair test: passed, correct identity/cipher/decrypt + wrong-ID rejection
 native 13021 FDT test: passed, production command branch + encoder + packed wire frame
 native manual FDT:     passed, strict boundary/malformed input/dual-gate policy
@@ -1163,6 +1191,7 @@ intentionally condensed.
 │   ├── 0011-goodix550c-refuse-empty-reference-frame.patch
 │   ├── 0012-goodix550c-size-reference-retry-to-blackout.patch
 │   ├── 0013-goodix550c-keep-sensor-awake-between-enroll-stages.patch
+│   ├── 0014-goodix550c-stop-openssl-installing-an-atexit-handler.patch
 │   ├── driver-series                 # ordered driver-repository patches
 │   └── README.md                     # patch-series threat model
 ├── pyproject.toml                    # Python package/test/lint metadata

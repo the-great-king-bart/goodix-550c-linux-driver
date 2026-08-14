@@ -98,6 +98,32 @@ on_enroll_progress (FpDevice *device,
 }
 
 /**
+ * on_match_reported:
+ *
+ * Runs when the device has a verdict, which is before the driver waits for the
+ * pad to clear. That wait is bounded at 600 polls, so the lift instruction has
+ * to go out here: issuing it when the trial returns would arrive after the wait
+ * it is meant to satisfy, and a shutdown that aborts on a spent budget leaves
+ * the sensor unable to read the next frame at all.
+ */
+static void
+on_match_reported (FpDevice *device,
+                   FpPrint  *match,
+                   FpPrint  *print,
+                   gpointer  user_data,
+                   GError   *error)
+{
+  (void) device;
+  (void) match;
+  (void) print;
+  (void) user_data;
+  (void) error;
+
+  puts (">>> LIFT your finger off the sensor.");
+  fflush (stdout);
+}
+
+/**
  * run_verify_trial:
  *
  * Run one match against the in-memory template. Returns TRUE when the trial
@@ -112,7 +138,7 @@ run_verify_trial (FpDevice  *device,
 {
   g_autoptr(FpPrint) scanned = NULL;
 
-  if (!fp_device_verify_sync (device, enrolled, NULL, NULL, NULL,
+  if (!fp_device_verify_sync (device, enrolled, NULL, on_match_reported, NULL,
                               match, &scanned, error))
     return FALSE;
 
@@ -222,7 +248,7 @@ main (void)
                                                 FP_DEVICE_RETRY_GENERAL) ||
                                error->domain == FP_DEVICE_RETRY;
 
-          printf ("Trial %d/%d attempt %d: %s\n>>> LIFT your finger off the sensor.\n",
+          printf ("Trial %d/%d attempt %d: %s\n",
                   trial + 1, VERIFY_TRIALS, attempt + 1, error->message);
           fflush (stdout);
           g_clear_error (&error);
@@ -247,7 +273,7 @@ main (void)
       if (match)
         observed_matches++;
 
-      printf ("Trial %d/%d result: %s (expected %s).\n>>> LIFT your finger off the sensor.\n",
+      printf ("Trial %d/%d result: %s (expected %s).\n",
               trial + 1, VERIFY_TRIALS,
               match ? "MATCH" : "no match",
               same_finger ? "MATCH" : "no match");

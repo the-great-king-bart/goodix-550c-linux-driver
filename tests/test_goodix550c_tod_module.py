@@ -210,7 +210,8 @@ def test_enroll_harness_cues_the_lift_on_time_and_exits_beside_live_threads():
 
     # The finger stays PRESENT for the whole bounded finger-up wait, so a
     # status-driven prompt reaches the operator only after that wait has
-    # already succeeded or expired. Both stage outcomes must cue the lift.
+    # already succeeded or expired. Both stage outcomes must cue the lift, and
+    # the stage callback runs before that wait begins.
     assert harness.count(">>> LIFT your finger off the sensor.") == 2
     assert 'puts (">>> LIFT' not in harness
     assert ">>> Finger detected" not in harness
@@ -241,12 +242,20 @@ def test_verify_harness_tests_a_rejection_and_never_stores_a_template():
     # The template and every scanned print stay in process memory.
     for forbidden in ("fp_print_serialize", "fp_print_to_file", "g_file_set_contents", "fopen"):
         assert forbidden not in harness
-    assert "fp_device_verify_sync (device, enrolled, NULL, NULL, NULL," in harness
     assert "g_autoptr(FpPrint) scanned = NULL;" in harness
 
     # A retry is the device asking for another placement, not a verdict.
     assert "#define VERIFY_MAX_RETRIES" in harness
     assert "error->domain == FP_DEVICE_RETRY" in harness
+
+    # The lift cue must come from the match callback, which runs before the
+    # bounded finger-up wait. Cueing it from the return path arrives after the
+    # wait it is meant to satisfy, and a shutdown that aborts on a spent budget
+    # leaves the sensor unable to read the next frame.
+    # Three cues: one per enrollment stage outcome, plus the match callback.
+    assert harness.count(">>> LIFT your finger off the sensor.") == 3
+    assert "on_match_reported" in harness
+    assert "fp_device_verify_sync (device, enrolled, NULL, on_match_reported, NULL," in harness
 
     # Same fail-closed profile as the other harnesses.
     assert 'g_strcmp0 (manual_fdt_gate, "1") == 0' in harness

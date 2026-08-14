@@ -30,7 +30,7 @@ usage() {
     printf '%s\n' \
         "Usage: sudo $0 --stage-dir BUILD_STAGE --psk-file SECRET_FILE \\" \
         '  --allow-volatile-init --allow-manual-fdt-poll \\' \
-        '  (--enroll | --verify | --list | --delete) [--finger NAME]' \
+        '  (--gui | --enroll | --verify | --list | --delete) [--finger NAME]' \
         '' \
         'Starts the installed fprintd on a private, non-activating D-Bus with' \
         'only the project-local TOD module loaded, then runs the matching' \
@@ -41,7 +41,7 @@ usage() {
         'which is git-ignored. This is the one part of the project that keeps' \
         'fingerprint data; delete that directory to remove every template.' \
         '' \
-        'Prompts come from fprintd itself and appear directly in this terminal.'
+        '--gui opens a window instead, which is the only mode whose prompts are\nvisible when somebody other than the operator starts the session.'
 }
 
 while (($#)); do
@@ -57,6 +57,7 @@ while (($#)); do
         --enroll) ACTION=enroll ;;
         --verify) ACTION=verify ;;
         --list) ACTION=list ;;
+        --gui) ACTION=gui ;;
         --delete) ACTION=delete ;;
         --finger)
             shift; (($#)) || { printf 'Missing value for --finger\n' >&2; exit 2; }
@@ -85,15 +86,20 @@ case "$FINGER" in
     *) printf 'Refusing unrecognised finger name: %s\n' "$FINGER" >&2; exit 2 ;;
 esac
 
-for command in bwrap chmod dbus-daemon dpkg-query find fuser gdbus install \
-    python3 realpath sha256sum systemctl timeout; do
+for command in bwrap chmod chown dbus-daemon dpkg-query find fuser gdbus id \
+    install python3 realpath setpriv sha256sum stdbuf systemctl timeout; do
     command -v "$command" >/dev/null || {
         printf 'Required command is unavailable: %s\n' "$command" >&2
         exit 1
     }
 done
-CLIENT="/usr/bin/fprintd-$ACTION"
-[[ -x "$CLIENT" ]] || { printf 'Missing fprintd client: %s\n' "$CLIENT" >&2; exit 1; }
+if [[ "$ACTION" == gui ]]; then
+    CLIENT="$PROJECT_ROOT/tools/goodix550c_gui.py"
+    [[ -f "$CLIENT" ]] || { printf 'Missing GUI: %s\n' "$CLIENT" >&2; exit 1; }
+else
+    CLIENT="/usr/bin/fprintd-$ACTION"
+    [[ -x "$CLIENT" ]] || { printf 'Missing fprintd client: %s\n' "$CLIENT" >&2; exit 1; }
+fi
 [[ -x /usr/libexec/fprintd ]] || { printf 'Installed fprintd is unavailable\n' >&2; exit 1; }
 
 for supplied in "$STAGE_DIR" "$PSK_FILE"; do
@@ -167,6 +173,14 @@ if fuser -s "$usb_node" 2>/dev/null; then
     exit 2
 fi
 
+DESKTOP_USER="${SUDO_USER:-}"
+if [[ -z "$DESKTOP_USER" ]]; then
+    printf 'Refusing: SUDO_USER is unset, so there is no account to enrol for.\n' >&2
+    exit 2
+fi
+DESKTOP_UID="$(id -u "$DESKTOP_USER")"
+DESKTOP_GID="$(id -g "$DESKTOP_USER")"
+
 install -d -m 0700 "$STATE_ROOT" "$STATE_ROOT/prints"
 RUN_DIR="$(mktemp -d "$PROJECT_ROOT/build/goodix550c-fprintd-run.XXXXXX")"
 chmod 0700 "$RUN_DIR"
@@ -174,6 +188,11 @@ install -d -m 0700 "$RUN_DIR/home" "$RUN_DIR/logs" "$RUN_DIR/modules" \
     "$RUN_DIR/runtime" "$RUN_DIR/tmp"
 install -m 0644 "$MODULE" "$RUN_DIR/modules/libgoodix550c.so"
 install -m 0600 "$PSK_FILE" "$RUN_DIR/goodix550c.psk"
+# The window runs as the desktop user, and handing over a root-owned socket
+# after the fact was not enough for it to complete the D-Bus handshake. Own the
+# bus from the start instead; the root daemon can still connect to it.
+install -d -o "$DESKTOP_USER" -m 0700 "$RUN_DIR/bus.d"
+chmod 0711 "$RUN_DIR"
 
 cleanup() {
     local status=$?
@@ -197,11 +216,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-BUS_SOCKET="$RUN_DIR/bus"
+BUS_SOCKET="$RUN_DIR/bus.d/bus"
 BUS_ADDRESS="unix:path=$(python3 -c \
     'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe="/"))' \
     "$BUS_SOCKET")"
-python3 - "$PROJECT_ROOT/tod/private-bus.conf" "$RUN_DIR/private-bus.conf" \
+python3 - "$PROJECT_ROOT/tod/app-bus.conf" "$RUN_DIR/private-bus.conf" \
     "$BUS_ADDRESS" <<'PY'
 import html, sys
 from pathlib import Path
@@ -215,8 +234,13 @@ Path(sys.argv[2]).write_text(
 PY
 chmod 0600 "$RUN_DIR/private-bus.conf"
 
-env -i PATH=/usr/bin:/bin HOME="$RUN_DIR/home" TMPDIR="$RUN_DIR/tmp" \
-    XDG_RUNTIME_DIR="$RUN_DIR/runtime" \
+chown "$DESKTOP_USER" "$RUN_DIR/private-bus.conf"
+# setpriv rather than runuser: runuser opens a PAM session and tears it down
+# again, which killed the bus with "Session terminated, killing shell".
+setpriv --reuid="$DESKTOP_UID" --regid="$DESKTOP_GID" --init-groups \
+    env -i PATH=/usr/bin:/bin \
+    HOME="/home/$DESKTOP_USER" TMPDIR=/tmp \
+    XDG_RUNTIME_DIR="/run/user/$DESKTOP_UID" \
     dbus-daemon --config-file="$RUN_DIR/private-bus.conf" --nofork --nopidfile \
         --nosyslog >"$RUN_DIR/logs/dbus.log" 2>&1 &
 BUS_PID=$!
@@ -229,6 +253,11 @@ for _ in {1..100}; do
     sleep 0.05
 done
 [[ -S "$BUS_SOCKET" ]] || { printf 'Private D-Bus socket did not appear\n' >&2; exit 1; }
+# Both sides of this session must reach the socket: the daemon runs as root
+# under bubblewrap, which drops the capability that would let it ignore the
+# owning user's mode bits, and the window runs as the desktop user.
+chmod 0711 "$RUN_DIR/bus.d"
+chmod 0666 "$BUS_SOCKET"
 
 # fprintd asks PolicyKit before every device method, and this private bus has no
 # polkit on it. The stub answers only net.reactivated.fprint.* actions and binds
@@ -279,7 +308,7 @@ env -i PATH=/usr/bin:/bin bwrap \
     --setenv HOME "$SANDBOX_RUN_DIR/home" \
     --setenv TMPDIR /tmp \
     --setenv XDG_RUNTIME_DIR "$SANDBOX_RUN_DIR/runtime" \
-    --setenv DBUS_SYSTEM_BUS_ADDRESS "unix:path=$SANDBOX_RUN_DIR/bus" \
+    --setenv DBUS_SYSTEM_BUS_ADDRESS "unix:path=$SANDBOX_RUN_DIR/bus.d/bus" \
     --setenv FP_TOD_DRIVERS_DIR "$SANDBOX_RUN_DIR/modules" \
     --setenv FP_DRIVERS_ALLOWLIST goodix53x5 \
     --setenv GOODIX550C_ALLOW_VOLATILE_INIT 1 \
@@ -324,17 +353,34 @@ printf 'Private fprintd is up with the project-local TOD module.\n'
 printf 'Templates live in %s\n' "$STATE_ROOT/prints"
 printf 'Follow the prompts below; they come from fprintd itself.\n\n'
 
+if [[ "$ACTION" == gui ]]; then
+    printf 'Opening the window on the %s desktop session.\n' "$DESKTOP_USER"
+    set +e
+    setpriv --reuid="$DESKTOP_UID" --regid="$DESKTOP_GID" --init-groups env \
+        DISPLAY="${DISPLAY:-:0}" \
+        WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}" \
+        XDG_RUNTIME_DIR="/run/user/$DESKTOP_UID" \
+        XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}" \
+        python3 "$CLIENT" --bus-address "$BUS_ADDRESS" --username "$DESKTOP_USER"
+    client_status=$?
+    set -e
+    printf '\nWindow closed with status %d\n' "$client_status"
+    printf 'Daemon log: %s\n' "$RUN_DIR/logs/fprintd.log"
+    exit "$client_status"
+fi
+
 client_args=()
 case "$ACTION" in
-    enroll|verify) client_args=(-f "$FINGER" "$SUDO_USER") ;;
-    delete)        client_args=("$SUDO_USER") ;;
-    list)          client_args=("$SUDO_USER") ;;
+    enroll|verify) client_args=(-f "$FINGER" "$DESKTOP_USER") ;;
+    delete|list)   client_args=("$DESKTOP_USER") ;;
 esac
 
+# stdbuf keeps each prompt visible as it happens rather than held in a block
+# buffer until exit, which matters when this runs with its output redirected.
 set +e
 env -i PATH=/usr/bin:/bin HOME="$RUN_DIR/home" TERM="${TERM:-dumb}" \
     DBUS_SYSTEM_BUS_ADDRESS="$BUS_ADDRESS" \
-    "$CLIENT" "${client_args[@]}"
+    stdbuf -oL -eL "$CLIENT" "${client_args[@]}"
 client_status=$?
 set -e
 

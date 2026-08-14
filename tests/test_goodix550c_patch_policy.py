@@ -22,6 +22,7 @@ ENROLL_COVERAGE_PATCH = PATCH_DIR / "0009-goodix550c-cover-pad-with-more-enroll-
 RETRY_REASON_PATCH = PATCH_DIR / "0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch"
 REFERENCE_SIGNAL_PATCH = PATCH_DIR / "0011-goodix550c-refuse-empty-reference-frame.patch"
 RETRY_BUDGET_PATCH = PATCH_DIR / "0012-goodix550c-size-reference-retry-to-blackout.patch"
+KEEP_AWAKE_PATCH = PATCH_DIR / "0013-goodix550c-keep-sensor-awake-between-enroll-stages.patch"
 DRIVER_SERIES = PATCH_DIR / "driver-series"
 BUILD_SCRIPT = ROOT / "scripts" / "build_goodix550c_libfprint.sh"
 RUN_SCRIPT = ROOT / "scripts" / "run_goodix550c_open_close.sh"
@@ -329,6 +330,19 @@ def test_reference_retry_budget_covers_the_measured_blackout():
     assert retries * delay >= 11_000
 
 
+def test_the_sensor_is_not_slept_between_enrollment_stages():
+    added = added_lines(KEEP_AWAKE_PATCH)
+
+    assert "gboolean   finger_up_keep_awake;" in added
+    assert "self->finger_up_keep_awake = self->enroll_stage < GOODIX_ENROLL_SAMPLES;" in added
+
+    # The last stage, and verification, still end in a sleep, and the flag is
+    # consumed where it is read so it cannot leak into a later action.
+    assert "if (self->finger_up_keep_awake)" in added
+    assert "self->finger_up_keep_awake = FALSE;" in added
+    assert "goodix_cmd_set_sleep_mode (ssm, dev);" not in added
+
+
 def test_manual_fdt_native_policy_covers_boundary_and_malformed_inputs():
     source = NATIVE_MANUAL_FDT_TEST.read_text(encoding="utf-8")
 
@@ -358,6 +372,7 @@ def test_driver_patch_series_is_explicit_ordered_and_unique():
         RETRY_REASON_PATCH.name,
         REFERENCE_SIGNAL_PATCH.name,
         RETRY_BUDGET_PATCH.name,
+        KEEP_AWAKE_PATCH.name,
     ]
     assert len(entries) == len(set(entries))
 

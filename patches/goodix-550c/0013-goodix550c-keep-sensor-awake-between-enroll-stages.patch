@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fingerprint Lab <noreply@example.invalid>
+Date: Fri, 14 Aug 2026 16:30:00 +0200
+Subject: [PATCH] goodix550c: stop sleeping the sensor between enrollment stages
+
+The blackout follows an action that ends in sleep, and the enrollment loop ends
+every single stage that way: the finger-up wait it runs between stages closes
+with GOODIX_FINGER_UP_SLEEP, and the next stage reads its reference frame
+350ms later. The trigger therefore fires once per stage rather than once per
+action.
+
+The measurements match. A three-finger session logged 25 empty reference
+frames across its stages, and the operator independently noticed that pausing
+before re-placing a finger made stages register, which is what waiting out the
+recovery looks like from the outside.
+
+Between stages the sleep buys nothing, because another capture follows at once.
+Keep it for the last stage, where the action really is ending, and for
+verification, which does finish there. The flag is consumed by the wait that
+reads it so it cannot leak into a later action.
+
+This removes the trigger from the enrollment path rather than absorbing it.
+Why the sensor stops answering after a sleep is still unknown, and the retry
+budget from the previous patch still covers the cases that remain.
+
+---
+
+--- a/drivers/goodix53x5/goodix53x5-enroll.c
++++ b/drivers/goodix53x5/goodix53x5-enroll.c
+@@ -157,6 +157,13 @@
+       break;
+ 
+     case GOODIX_ENROLL_WAIT_FINGER_UP:
++      /* The finger-up wait ends by putting the sensor to sleep, and this sensor
++       * stops answering image requests for seconds afterwards: an enrolment
++       * measured 25 empty reference frames across its stages, and going slower
++       * by hand was what made stages register. Between stages the sleep buys
++       * nothing, because another capture follows immediately. Keep it for the
++       * last one, where the action really is ending. */
++      self->finger_up_keep_awake = self->enroll_stage < GOODIX_ENROLL_SAMPLES;
+       goodix_scan_start_finger_up_subsm (ssm, dev);
+       break;
+ 
+--- a/drivers/goodix53x5/goodix53x5-private.h
++++ b/drivers/goodix53x5/goodix53x5-private.h
+@@ -255,6 +255,10 @@
+   GPtrArray *enroll_features; /* array of GBytes* serialized SIGFM features */
+   gint       enroll_stage;
+ 
++  /* Set for the finger-up wait between enrollment stages, where sleeping would
++   * cost the next stage its reference frame. Consumed by that wait. */
++  gboolean   finger_up_keep_awake;
++
+   /* Consecutive no-signal reference frames in the current capture attempt. */
+   guint      reference_retries;
+ 
+--- a/drivers/goodix53x5/goodix53x5-scan.c
++++ b/drivers/goodix53x5/goodix53x5-scan.c
+@@ -1034,6 +1034,15 @@
+       break;
+ 
+     case GOODIX_FINGER_UP_SLEEP:
++      /* Skipped when the caller is about to capture again. The flag is consumed
++       * here so it cannot leak into the next action, which does want the sleep. */
++      if (self->finger_up_keep_awake)
++        {
++          self->finger_up_keep_awake = FALSE;
++          fp_dbg ("Keeping the sensor awake between enrollment stages");
++          fpi_ssm_jump_to_state (ssm, GOODIX_FINGER_UP_EC_POWER_OFF);
++          return;
++        }
+       goodix_cmd_set_sleep_mode (ssm, dev);
+       break;
+ 
+

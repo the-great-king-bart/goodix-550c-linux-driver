@@ -902,6 +902,27 @@ about fifteen seconds, which turns a blackout into a wait rather than a refusal.
 That is the right trade for an authenticator, because the alternative is turning
 away an operator who did nothing wrong.
 
+#### The trigger fires once per enrollment stage
+
+The enrollment loop runs a finger-up wait between stages, and that wait ends with
+`GOODIX_FINGER_UP_SLEEP`. The next stage reads its reference frame 350ms later.
+Since the blackout follows a sleep, the trigger therefore fires once per stage
+rather than once per action, which is why enrollment saw so many empty frames: a
+three-finger session logged 25 of them.
+
+The operator noticed the same thing from the outside without seeing any of this,
+reporting that pausing before re-placing a finger made stages register. That is
+what waiting out the recovery looks like.
+
+Patch `0013` stops sleeping between stages. The sleep still happens on the last
+stage and at the end of verification, where the action really is ending; only the
+inter-stage case is skipped, and the flag is consumed where it is read so it
+cannot leak into a later action. This removes the trigger from the enrollment path
+rather than absorbing it.
+
+Back-to-back actions still meet the blackout, and there the retry budget from
+`0012` absorbs it as a wait.
+
 #### Session isolation
 
 The windowed session spans two accounts by necessity: the daemon needs root for

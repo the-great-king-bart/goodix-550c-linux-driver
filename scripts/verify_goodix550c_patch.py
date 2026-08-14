@@ -303,6 +303,15 @@ def audit(driver_tree: Path, libfprint_tree: Path) -> list[str]:
         "an empty reference frame can still be stored and subtracted",
         failures,
     )
+    # The blackout follows a sleep, and the enrollment loop used to sleep once
+    # per stage rather than once per action.
+    require(
+        "self->finger_up_keep_awake = FALSE;" in scan_raw
+        and "self->finger_up_keep_awake = self->enroll_stage < GOODIX_ENROLL_SAMPLES;"
+        in read(driver_dir / "goodix53x5-enroll.c", failures),
+        "enrollment still sleeps the sensor between stages",
+        failures,
+    )
 
     require(
         "goodix_device_measure_fdt_delta" in calibration

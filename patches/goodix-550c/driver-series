@@ -10,3 +10,4 @@
 0010-goodix550c-distinguish-lifted-finger-from-misplacement.patch
 0011-goodix550c-refuse-empty-reference-frame.patch
 0012-goodix550c-size-reference-retry-to-blackout.patch
+0013-goodix550c-keep-sensor-awake-between-enroll-stages.patch

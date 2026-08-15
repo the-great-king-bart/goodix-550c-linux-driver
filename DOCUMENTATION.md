@@ -1110,13 +1110,99 @@ process should not install a process-wide exit handler at all. Verified by
 repeating the exact conditions — open the sensor, cancel, stop the service —
 which now logs `Deactivated successfully` with no new core dump.
 
-#### Scope: every sudo now waits
+#### Scope: `common-auth` was the wrong place
 
 `pam-auth-update` installs the stanza into `common-auth`, which every PAM service
-includes. A scripted `sudo` that supplies a password on stdin therefore blocks for
-the full ten seconds before falling through. Restricting the factor to the
-graphical login and screensaver would avoid that tax; it is left as-is until the
-operator decides.
+includes — `sudo` among them. Every `sudo` then waited the full ten seconds for a
+finger before falling through, including scripted ones that supply a password on
+stdin.
+
+It was also unnecessary. KDE ships `/usr/lib/pam.d/kde-fingerprint` with its own
+`auth required pam_fprintd.so`, independent of `common-auth`, and that is the
+service the lock screen uses — the two confirmed unlocks went through it. Removing
+the `common-auth` entry with `--disable-login` therefore costs nothing at the lock
+screen and returns `sudo` to 0.033s from 10s.
+
+The remaining gap is the display manager: `/etc/pam.d/sddm` reaches
+`pam_fprintd` only through `common-auth`, so the boot login prompt no longer
+offers a finger. Adding it to that one service directly would restore it without
+reintroducing the `sudo` tax.
+
+## What the stored fingerprint actually is, and what protects it
+
+### The templates are not encrypted
+
+libfprint stores prints as plain files. The first bytes of one of ours:
+
+```text
+00000000: 4650 3301 0000 0067 6f6f 6469 7835 3378  FP3....goodix53x
+00000010: 3500 3000 0007 6261 7274 0000 0000 0003  5.0...bart......
+```
+
+A plaintext `FP3` magic, the driver name, and the account name, and the file
+compresses to 33% of its size. Encrypted data does not compress. There is no
+encryption at rest here and libfprint does not offer any.
+
+The contents are SIGFM (SIFT) feature descriptors — keypoint positions and their
+local gradient descriptors — not the raw 108x88 frames. That is not a security
+control, and it should not be treated as one: the descriptors are enough to
+authenticate as this operator against this system, which is precisely what an
+attacker would want them for. Reconstructing a presentable image from them is a
+harder and separate question that this project has not investigated.
+
+### The disk is not encrypted either
+
+```text
+/dev/nvme0n1p5  ext4  /      no LUKS volumes present
+```
+
+So the only thing protecting a stored fingerprint on this machine is file
+permissions on a plaintext filesystem.
+
+| Who | Can read the templates? |
+| --- | --- |
+| Another ordinary account on this machine | No — the store is `0700` root-owned |
+| Anything running as root | Yes |
+| Anyone who boots a USB stick, or removes the SSD | Yes |
+
+Encrypting only `/var/lib/fprint` would not close the third row. `fprintd` is a
+root daemon that opens the store before anybody logs in, so its key would have to
+sit on the same unencrypted disk. Full-disk encryption is the control that
+actually addresses it; nothing smaller does.
+
+### fprintd writes templates world-readable
+
+Each template `fprintd` enrolls is created `0644`. The directory above it is
+`0700` and root-owned, so the files are unreachable in practice, but a stored
+fingerprint should not depend on a single directory bit. `--harden-store`
+re-tightens files to `0600` and directories to `0700`, and `--status` reports when
+any file has drifted. It has to be re-runnable because every new enrollment
+creates a fresh file at the loose mode again.
+
+### Copies that were deleted
+
+A process that has opened this sensor holds decoded frames and the TLS PSK in
+memory, so any core dump of it holds both. Four were on disk and were shredded and
+removed:
+
+```text
+/var/lib/systemd/coredump/core.fprintd.0.<...>.zst              6634505 bytes
+/var/lib/systemd/coredump/core.goodix550c-tod-.0.<...>.zst      3347745 bytes
+/var/crash/_usr_libexec_fprintd.0.crash                         8881479 bytes
+/var/crash/_usr_lib_cargo_bin_coreutils_timeout.0.crash          832848 bytes
+```
+
+Also removed: `build/goodix550c-fprintd-state`, which held a duplicate copy of
+every template plus the session logs.
+
+`shred` is not a guarantee here. ext4 journals metadata, and the SSD's wear
+levelling means an overwrite need not land on the physical blocks that held the
+original. Treat these as unlinked, not as erased.
+
+Still present by necessity: `/etc/goodix550c/goodix550c.psk` (`0600` root), the
+sensor's session key, and the git-ignored project copies under
+`research/secrets/`. The system journal retains match scores and frame
+statistics, which are neither templates nor images.
 
 ## Verification
 

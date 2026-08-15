@@ -61,6 +61,9 @@ usage() {
         '  --uninstall       Remove module, PSK and service environment. Add' \
         '                    --purge-prints to also erase enrolled templates.' \
         '  --status          Report what is installed. Needs no other flags.' \
+        '  --harden-store    Re-tighten template files to root-only 0600.' \
+        '                    fprintd writes each new one at 0644, so run this' \
+        '                    after every enrollment.' \
         '' \
         'Options:' \
         '  --replace-prints    Overwrite templates already in the system store.' \
@@ -79,6 +82,7 @@ while (($#)); do
         --allow-volatile-init) VOLATILE_ACK=1 ;;
         --allow-manual-fdt-poll) MANUAL_FDT_ACK=1 ;;
         --install-driver) ACTION=install-driver ;;
+        --harden-store) ACTION=harden-store ;;
         --enable-login) ACTION=enable-login ;;
         --disable-login) ACTION=disable-login ;;
         --uninstall) ACTION=uninstall ;;
@@ -102,10 +106,27 @@ fi
 # Status
 # ========================================================================
 
+# fprintd creates each template with mode 0644. The directory above them is
+# 0700 root-only, so nothing can reach them today, but a stored fingerprint
+# should not be one chmod away from being world-readable. Re-runnable, because
+# every new enrollment writes a fresh file at the loose mode again.
+harden_store() {
+    [[ -d "$SYSTEM_PRINTS" ]] || {
+        printf 'No template store at %s.\n' "$SYSTEM_PRINTS"
+        return 0
+    }
+    chown -R root:root "$SYSTEM_PRINTS"
+    find "$SYSTEM_PRINTS" -type d -exec chmod 0700 {} +
+    find "$SYSTEM_PRINTS" -type f -exec chmod 0600 {} +
+    printf 'Tightened %s to root-only.\n' "$SYSTEM_PRINTS"
+}
+
 report_status() {
     local pam_state='disabled'
+    local loose
 
     grep -qs 'pam_fprintd' /etc/pam.d/common-auth && pam_state='ENABLED'
+    loose="$(find "$SYSTEM_PRINTS" -type f ! -perm 0600 2>/dev/null | wc -l)"
 
     printf 'TOD module:      %s\n' \
         "$([[ -f "$INSTALLED_MODULE" ]] && printf '%s' "$INSTALLED_MODULE" || printf 'not installed')"
@@ -115,6 +136,11 @@ report_status() {
         "$([[ -f "$DROPIN" ]] && printf '%s' "$DROPIN" || printf 'not installed')"
     printf 'Templates:       %s\n' \
         "$(find "$SYSTEM_PRINTS" -type f 2>/dev/null | wc -l) in $SYSTEM_PRINTS"
+    if [[ "$loose" != 0 ]]; then
+        printf 'Template modes:  %s file(s) looser than 0600 -- run --harden-store\n' "$loose"
+    else
+        printf 'Template modes:  root-only (0600)\n'
+    fi
     printf 'Login factor:    %s\n' "$pam_state"
     printf 'fprintd.service: %s\n' "$(systemctl is-active fprintd.service 2>/dev/null || true)"
 }
@@ -263,6 +289,7 @@ EOF
     chmod 0644 "$DROPIN"
 
     migrate_prints
+    harden_store
     systemctl daemon-reload
 
     printf '\nDriver installed. The login prompt is unchanged.\n'
@@ -341,6 +368,7 @@ uninstall_all() {
 
 case "$ACTION" in
     install-driver) install_driver ;;
+    harden-store) harden_store ;;
     enable-login) enable_login ;;
     disable-login) disable_login ;;
     uninstall) uninstall_all ;;

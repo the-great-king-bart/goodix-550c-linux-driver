@@ -1,20 +1,60 @@
 # Goodix 27c6:550c Linux driver lab
 
-This project enables the USB fingerprint reader in a Lenovo Yoga 9 14IAP7. Linux
-enumerates the hardware as `27c6:550c`, but upstream `libfprint` does not bind a
-driver to it.
+The USB fingerprint reader in the Lenovo Yoga 9 14IAP7 enumerates as `27c6:550c`,
+and upstream `libfprint` lists it as unsupported: no driver binds to it. This
+project makes it work on Ubuntu — enrolment, verification, and fingerprint login —
+and documents the evidence for every claim it makes.
+
+It reached a working end state. On Ubuntu 26.04 with `libfprint 1.95.1+tod1`, via
+Ubuntu's own `fprintd` and a screen-lock PAM prompt:
+
+```text
+Enrollment complete with 16 samples          16 stages in 46s
+Identify best SIGFM score: 8903 (best_min: 150)
+report_verify_status: result verify-match
+```
+
+Non-enrolled fingers, measured over nine clean captures, scored **0 to 10** against
+a threshold of **150**, with the weakest accepted genuine attempt at **2247**. The
+two distributions do not approach each other. That is a separation measurement, not
+a false-accept rate — see [what the numbers do and do not
+show](#what-this-does-not-establish).
+
+The interesting engineering problem was not the protocol. It was that this unit's
+firmware, `GF5288_GM168SEC_APP_13021`, never emits the asynchronous finger-down
+event the driver design assumes, so contact has to be detected by polling raw
+capacitance deltas — and that the sensor intermittently returns blank reference
+frames for about eleven seconds after being put to sleep, which silently poisoned
+every template enrolled during the window.
 
 There are three deliberately separated layers:
 
-- a tightly allow-listed Python identity/backup probe that cannot reset or configure
-  the sensor; and
+- a tightly allow-listed Python identity/backup probe that cannot reset or
+  configure the sensor;
 - an isolated `libfprint` 1.94.10 build for the exact `550c` that can perform a
-  TLS open, enrollment, and verification. Persistent mutation is denied at the
+  TLS open, enrolment, and verification. Persistent mutation is denied at the
   transport boundary, and volatile initialization needs both a build-time and a
-  runtime opt-in; and
+  runtime opt-in;
 - a source-recompiled external TOD module for Ubuntu's exact
   `libfprint 1.95.1+tod1` runtime. It leaves Ubuntu's core library and `fprintd`
   untouched and has a private-D-Bus smoke mode in which USB is not visible.
+
+## Status and safety
+
+**Nothing here is installed or running on the author's machine.** The driver was
+installed, validated against the host `fprintd`, used for real screen unlocks, then
+fully removed; the enrolled templates were erased and the crash dumps that had held
+decoded frames and the sensor key in memory were shredded. `--uninstall` reverses
+every system change this project can make.
+
+**This is research-grade, not production-grade.** It is fourteen patches on an
+unreviewed experimental driver fork, validated by one person, on one machine, with
+one finger set. The matching separation is good. The code maturity is not. Read
+[DOCUMENTATION.md](DOCUMENTATION.md) before trusting it with anything.
+
+**Stored fingerprints are not encrypted.** That is a `libfprint` property, not a
+choice made here, and the engineering record documents exactly what protects them
+and what does not.
 
 ## Set up
 
@@ -70,7 +110,7 @@ sudo scripts/run_goodix550c_open_close.sh \
   --stage-dir build/goodix550c-13021-manual-fdt-v7 \
   --psk-file research/secrets/goodix550c.psk \
   --allow-volatile-init
-sudo chown bart:bart research/secrets/goodix550c.psk
+sudo chown "$USER:$USER" research/secrets/goodix550c.psk
 ```
 
 `--allow-volatile-init` is required for each run; the volatile USB/MCU reset gate
@@ -188,7 +228,7 @@ sudo scripts/run_goodix550c_tod_open_close.sh \
   --psk-file research/secrets/goodix550c.psk \
   --expected-psk-hash research/artifacts/psk-hash-current.json \
   --allow-volatile-init
-sudo chown bart:bart research/secrets/goodix550c.psk
+sudo chown "$USER:$USER" research/secrets/goodix550c.psk
 ```
 
 This run needs no finger: the harness opens the device and closes it, and reaches
@@ -377,13 +417,31 @@ Do not run any upstream `goodix-fp-dump` driver script against this sensor. It d
 
 ## Proven live path
 
-On this machine, the recovered Windows PSK has completed a real TLS handshake with
-firmware `GF5288_GM168SEC_APP_13021`; volatile initialization and close both
-succeeded using the isolated build. As of 2026-08-13 the same open/close also
-passes through Ubuntu's *installed* `libfprint 1.95.1+tod1` runtime via the TOD
-module, three consecutive runs with the pad clear. No firmware, PSK, or production
-data was written, and no system library or service was changed. No fingerprint has
-been read under Linux: enrollment and verification are still unbuilt.
+The recovered Windows PSK completes a real TLS handshake with firmware
+`GF5288_GM168SEC_APP_13021`. Volatile initialization and close both succeed on the
+isolated build, and the same open/close passes through Ubuntu's *installed*
+`libfprint 1.95.1+tod1` runtime via the TOD module.
+
+Beyond that, through Ubuntu's own `fprintd` with no sandbox: a 16-stage enrolment
+completed in 46s, verification returned `verify-match` at a score of 8903, and the
+KDE lock screen authenticated by fingerprint. No firmware, PSK, or production data
+was ever written to the sensor, and Ubuntu's own `libfprint` and `fprintd` binaries
+were never modified — the driver ships as an external TOD module beside them.
+
+### What this does not establish
+
+The false-accept **rate**. Nine non-enrolled presentations with zero false accepts
+bounds the rate near 30% by the rule of three, which is no useful bound; a claim
+under 1% needs several hundred presentations. The evidence here is the *shape* of
+the separation — non-enrolled fingers sit at the noise floor rather than near the
+threshold — and it is strong on that axis and weak on sample count.
+
+Those presentations were also the same person's other fingers rather than another
+person's. For this sensor that is a harder case in the ways that matter — same
+skin, same moisture, same placement habits — but it is not cross-subject data.
+
+The blank-reference fault is absorbed and routed around, not explained. Its cause
+is still unknown.
 
 If an open ever fails with `error:1C800066:Provider routines::cipher operation
 failed`, the sensor is holding a stale TLS session rather than rejecting the key.

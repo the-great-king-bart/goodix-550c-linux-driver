@@ -193,7 +193,7 @@ An explicit repository-local output can be requested with:
 The independent recovery run completed successfully: DPAPI integrity passed and the
 32-byte plaintext's SHA-256 matched the live sensor hash oracle. No key material was
 printed. `research/secrets/goodix550c.psk` is a 65-byte lowercase-hex-plus-newline
-file, owned by `bart`, mode `0600`, and ignored by Git.
+file, owned by the operator, mode `0600`, and ignored by Git.
 
 ## Fail-closed libfprint port
 
@@ -503,7 +503,7 @@ sudo scripts/run_goodix550c_tod_open_close.sh \
   --psk-file research/secrets/goodix550c.psk \
   --expected-psk-hash research/artifacts/psk-hash-current.json \
   --allow-volatile-init
-sudo chown bart:bart research/secrets/goodix550c.psk
+sudo chown "$USER:$USER" research/secrets/goodix550c.psk
 ```
 
 That command needs no finger contact: the harness opens the device and closes it.
@@ -1136,12 +1136,16 @@ libfprint stores prints as plain files. The first bytes of one of ours:
 
 ```text
 00000000: 4650 3301 0000 0067 6f6f 6469 7835 3378  FP3....goodix53x
-00000010: 3500 3000 0007 6261 7274 0000 0000 0003  5.0...bart......
+00000010: 3500 3000 0007 ---- ---- ---- ---- --03  5.0.....<account>
 ```
 
 A plaintext `FP3` magic, the driver name, and the account name, and the file
 compresses to 33% of its size. Encrypted data does not compress. There is no
 encryption at rest here and libfprint does not offer any.
+
+The account-name bytes are masked above because this record is public; they were
+the operator's login name in cleartext, which is the point being made. Anyone can
+reproduce it on their own store with `xxd /var/lib/fprint/$USER/*/*/*`.
 
 The contents are SIGFM (SIFT) feature descriptors — keypoint positions and their
 local gradient descriptors — not the raw 108x88 frames. That is not a security

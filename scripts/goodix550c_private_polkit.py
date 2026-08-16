@@ -8,8 +8,9 @@ enrolled or verified.
 
 Scope, deliberately narrow:
 
-* it binds only to the bus address given on the command line, which is the
-  per-run private socket, never the host system bus;
+* it binds only to the bus address given on the command line, and refuses
+  the system bus socket by path, so it cannot become the authority for the
+  whole host;
 * it answers only ``net.reactivated.fprint.*`` actions and returns
   not-authorized for anything else, so it cannot be used to wave through some
   unrelated privileged action if it is ever pointed at a wider bus; and
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import dbus
 import dbus.service
@@ -75,6 +77,17 @@ def main() -> int:
 
     if not args.bus_address.startswith("unix:path=/"):
         parser.error("refusing a bus address that is not a private unix socket")
+
+    # "Is an absolute unix socket" does not mean "is private": the system bus is
+    # unix:path=/run/dbus/system_bus_socket and satisfies it. Claiming
+    # org.freedesktop.PolicyKit1 there, on a host where no real polkit holds the
+    # name, would answer every fprintd authorization check for every caller with
+    # no challenge -- enroll, verify and delete-all included. Refuse the system
+    # bus by path rather than trusting the caller to pass the right socket.
+    socket_path = Path(args.bus_address[len("unix:path=") :].split(",", 1)[0])
+    for reserved in (Path("/run/dbus"), Path("/var/run/dbus")):
+        if socket_path == reserved or reserved in socket_path.parents:
+            parser.error(f"refusing the system bus socket: {socket_path}")
 
     DBusGMainLoop(set_as_default=True)
     bus = dbus.bus.BusConnection(args.bus_address)

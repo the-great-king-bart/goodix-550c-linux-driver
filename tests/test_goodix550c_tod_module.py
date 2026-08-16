@@ -326,6 +326,26 @@ def test_the_driver_declines_openssl_s_process_wide_atexit_handler():
     assert "process-wide atexit handler" in verifier
 
 
+def test_the_polkit_stub_refuses_to_become_the_authority_for_the_host():
+    stub = (ROOT / "scripts" / "goodix550c_private_polkit.py").read_text(encoding="utf-8")
+
+    # "Absolute unix socket" does not imply "private": the system bus is
+    # unix:path=/run/dbus/system_bus_socket and satisfies that test. Claiming
+    # org.freedesktop.PolicyKit1 there would authorize every fprintd action for
+    # every caller with no challenge, so the system bus is refused by path.
+    assert 'startswith("unix:path=/")' in stub
+    assert 'Path("/run/dbus")' in stub
+    assert 'Path("/var/run/dbus")' in stub
+    assert "refusing the system bus socket" in stub
+
+    # A trailing ,guid=... must not smuggle the system bus past the check.
+    assert 'split(",", 1)[0]' in stub
+
+    # And it still answers for fprintd actions only.
+    assert 'ALLOWED_ACTION_PREFIX = "net.reactivated.fprint."' in stub
+    assert "startswith(ALLOWED_ACTION_PREFIX)" in stub
+
+
 def test_system_installer_stages_the_login_factor_and_stays_reversible():
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 

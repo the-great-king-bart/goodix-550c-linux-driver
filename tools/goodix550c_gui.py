@@ -248,6 +248,8 @@ class FingerprintWindow(Gtk.Window):
             self.log(str(error))
 
     def on_stop(self, _button: Gtk.Button) -> None:
+        if self.device is None:
+            return
         for stop in ("EnrollStop", "VerifyStop"):
             try:
                 getattr(self.device, stop)()
@@ -259,6 +261,39 @@ class FingerprintWindow(Gtk.Window):
     def on_delete(self, _button: Gtk.Button) -> None:
         if self.device is None or self.busy:
             return
+
+        # DeleteEnrolledFingers2 erases every finger at once and there is no
+        # undo: recovering costs a full re-enrolment of each one, sixteen
+        # placements apiece. A destructive button beside the two ordinary ones
+        # should not fire on a single misclick.
+        enrolled: list[str] = []
+        with contextlib.suppress(dbus.DBusException):
+            enrolled = [str(f) for f in self.device.ListEnrolledFingers(self.username)]
+        if not enrolled:
+            self.log("Nothing enrolled to delete.")
+            return
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Delete all {len(enrolled)} enrolled fingerprint(s)?",
+        )
+        dialog.format_secondary_text(
+            "This erases " + ", ".join(enrolled) + " for "
+            f"{self.username} and cannot be undone. Each finger needs a full "
+            f"{self.total_stages}-stage enrolment to restore."
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Delete", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        if response != Gtk.ResponseType.ACCEPT:
+            self.log("Deletion cancelled.")
+            return
+
         try:
             self.device.DeleteEnrolledFingers2()
             self.log("Deleted every enrolled finger for this user.")

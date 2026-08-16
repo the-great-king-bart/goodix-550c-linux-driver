@@ -47,7 +47,7 @@ fully removed; the enrolled templates were erased and the crash dumps that had h
 decoded frames and the sensor key in memory were shredded. `--uninstall` reverses
 every system change this project can make.
 
-**This is research-grade, not production-grade.** It is fourteen patches on an
+**This is research-grade, not production-grade.** It is thirteen patches on an
 unreviewed experimental driver fork, validated by one person, on one machine, with
 one finger set. The matching separation is good. The code maturity is not. Read
 [DOCUMENTATION.md](DOCUMENTATION.md) before trusting it with anything.

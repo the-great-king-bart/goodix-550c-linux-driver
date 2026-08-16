@@ -123,10 +123,24 @@ harden_store() {
 
 report_status() {
     local pam_state='disabled'
-    local loose
+    local loose=0
+    local total=0
 
-    grep -qs 'pam_fprintd' /etc/pam.d/common-auth && pam_state='ENABLED'
-    loose="$(find "$SYSTEM_PRINTS" -type f ! -perm 0600 2>/dev/null | wc -l)"
+    # Everything below is written as `if` blocks rather than `cmd && var=...`
+    # on purpose. Under `set -e` a failing left-hand side aborts the whole
+    # function, and under `set -o pipefail` a `find` on a missing directory
+    # fails the pipeline even though `wc` succeeds. Reporting is the one thing
+    # that has to work when nothing is installed, which is exactly when those
+    # paths are absent.
+    if grep -qs 'pam_fprintd' /etc/pam.d/common-auth; then
+        pam_state='ENABLED'
+    fi
+    if [[ -d "$SYSTEM_PRINTS" ]]; then
+        total="$(find "$SYSTEM_PRINTS" -type f | wc -l)"
+        # Any group or other bit at all, rather than "not exactly 0600": a
+        # stricter mode such as 0400 is not a finding.
+        loose="$(find "$SYSTEM_PRINTS" -type f -perm /077 | wc -l)"
+    fi
 
     printf 'TOD module:      %s\n' \
         "$([[ -f "$INSTALLED_MODULE" ]] && printf '%s' "$INSTALLED_MODULE" || printf 'not installed')"
@@ -134,12 +148,11 @@ report_status() {
         "$([[ -f "$INSTALLED_PSK" ]] && printf '%s' "$INSTALLED_PSK" || printf 'not installed')"
     printf 'Service env:     %s\n' \
         "$([[ -f "$DROPIN" ]] && printf '%s' "$DROPIN" || printf 'not installed')"
-    printf 'Templates:       %s\n' \
-        "$(find "$SYSTEM_PRINTS" -type f 2>/dev/null | wc -l) in $SYSTEM_PRINTS"
+    printf 'Templates:       %s in %s\n' "$total" "$SYSTEM_PRINTS"
     if [[ "$loose" != 0 ]]; then
-        printf 'Template modes:  %s file(s) looser than 0600 -- run --harden-store\n' "$loose"
+        printf 'Template modes:  %s file(s) readable beyond root -- run --harden-store\n' "$loose"
     else
-        printf 'Template modes:  root-only (0600)\n'
+        printf 'Template modes:  root-only\n'
     fi
     printf 'Login factor:    %s\n' "$pam_state"
     printf 'fprintd.service: %s\n' "$(systemctl is-active fprintd.service 2>/dev/null || true)"
@@ -296,7 +309,7 @@ EOF
     printf 'Prove it against the host service before going further:\n'
     printf '    fprintd-list %s\n' "${SUDO_USER:-\$USER}"
     printf '    fprintd-verify\n'
-    printf 'Then, only if that works:  sudo %s --enable-login --yes-enable-login\n' "$0"
+    printf 'Then, only if that works:  sudo "%s" --enable-login --yes-enable-login\n' "$0"
 }
 
 # ========================================================================
@@ -331,7 +344,7 @@ enable_login() {
 
     printf '\nFingerprint is now a login factor. The password still works:\n'
     printf 'the PAM stanza ignores a failed or absent finger and falls through.\n'
-    printf 'Undo at any time with:  sudo %s --disable-login\n' "$0"
+    printf 'Undo at any time with:  sudo "%s" --disable-login\n' "$0"
 }
 
 disable_login() {

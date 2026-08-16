@@ -372,7 +372,9 @@ def test_system_installer_stages_the_login_factor_and_stays_reversible():
     assert "--harden-store" in script
     assert 'find "$SYSTEM_PRINTS" -type f -exec chmod 0600 {} +' in script
     assert 'find "$SYSTEM_PRINTS" -type d -exec chmod 0700 {} +' in script
-    assert "looser than 0600" in script
+    assert "readable beyond root" in script
+    # A stricter mode such as 0400 must not be reported as a finding.
+    assert "-perm /077" in script
 
 
 def test_full_default_off_tod_build_offline_when_inputs_are_present():

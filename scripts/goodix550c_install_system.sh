@@ -367,7 +367,11 @@ uninstall_all() {
 
     systemctl stop fprintd.service 2>/dev/null || true
     rm -f -- "$INSTALLED_MODULE" "$INSTALLED_PSK" "$DROPIN"
-    rmdir --ignore-fail-on-non-empty -- "$SECRET_DIR" "$DROPIN_DIR" 2>/dev/null || true
+    # TOD_DIR is included because this script creates it: libfprint-2-tod1 ships
+    # only the shared library, not the drivers directory. --ignore-fail-on-non-empty
+    # leaves it alone if another TOD driver is installed beside ours.
+    rmdir --ignore-fail-on-non-empty -- \
+        "$SECRET_DIR" "$DROPIN_DIR" "$TOD_DIR" 2>/dev/null || true
     systemctl daemon-reload
 
     if ((PURGE_PRINTS == 1)); then

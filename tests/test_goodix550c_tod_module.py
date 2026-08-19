@@ -387,6 +387,12 @@ def test_system_installer_stages_the_login_factor_and_stays_reversible():
     assert "--purge-prints" in script
     assert "Left templates in" in script
 
+    # The installer creates the TOD drivers directory (libfprint-2-tod1 ships
+    # only the library), so uninstall has to remove it again rather than leave
+    # an empty directory behind.
+    assert '"$SECRET_DIR" "$DROPIN_DIR" "$TOD_DIR"' in script
+    assert "rmdir --ignore-fail-on-non-empty" in script
+
     # fprintd writes each new template at 0644, so tightening has to be
     # re-runnable and the status has to say when it is needed.
     assert "--harden-store" in script
